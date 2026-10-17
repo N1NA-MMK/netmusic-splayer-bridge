@@ -1,5 +1,6 @@
 package com.splayerbridge.netmusic.client;
 
+import com.splayerbridge.netmusic.SPlayerBridge;
 import com.splayerbridge.netmusic.net.ModPayloads;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.Minecraft;
@@ -34,6 +35,8 @@ public final class ClientTransport {
             Session session = SESSIONS.get(payload.session());
             if (session != null) {
                 session.push(payload.data(), payload.last());
+            } else {
+                SPlayerBridge.LOGGER.warn("[SPlayerBridge] 收到未知会话的数据块: {}", payload.session());
             }
         });
         ClientPlayNetworking.registerGlobalReceiver(ModPayloads.AudioError.TYPE, (payload, context) -> {
@@ -53,6 +56,7 @@ public final class ClientTransport {
         SESSIONS.put(sessionId, session);
         Minecraft minecraft = Minecraft.getInstance();
         minecraft.execute(() -> ClientPlayNetworking.send(new ModPayloads.AudioRequest(sessionId, songId)));
+        SPlayerBridge.LOGGER.info("[SPlayerBridge] 向服务端请求音频 id={} session={}", songId, sessionId);
         return session.stream();
     }
 
@@ -65,6 +69,9 @@ public final class ClientTransport {
         private boolean done;
         private String error;
         private int unacked;
+        private long received;
+        private boolean loggedFirstChunk;
+        private boolean loggedFirstRead;
 
         private Session(int id) {
             this.id = id;
@@ -74,9 +81,17 @@ public final class ClientTransport {
             synchronized (lock) {
                 if (data != null && data.length > 0) {
                     queue.add(data);
+                    received += data.length;
+                    if (!loggedFirstChunk) {
+                        loggedFirstChunk = true;
+                        SPlayerBridge.LOGGER.info("[SPlayerBridge] 收到首块数据 session={} ({} 字节)",
+                                id, data.length);
+                    }
                 }
                 if (last) {
                     done = true;
+                    SPlayerBridge.LOGGER.info("[SPlayerBridge] 音频接收完成 session={}，共 {} KB",
+                            id, received / 1024);
                 }
                 lock.notifyAll();
             }
@@ -86,6 +101,7 @@ public final class ClientTransport {
             synchronized (lock) {
                 error = message;
                 done = true;
+                SPlayerBridge.LOGGER.warn("[SPlayerBridge] 服务端返回错误 session={}: {}", id, message);
                 lock.notifyAll();
             }
         }
@@ -134,6 +150,11 @@ public final class ClientTransport {
                         if (offset >= head.length) {
                             queue.poll();
                             offset = 0;
+                        }
+                        if (!loggedFirstRead) {
+                            loggedFirstRead = true;
+                            SPlayerBridge.LOGGER.info("[SPlayerBridge] 解码器开始读取 session={}，队列 {} 块",
+                                    id, queue.size());
                         }
                         unacked += count;
                         if (unacked >= ACK_THRESHOLD) {

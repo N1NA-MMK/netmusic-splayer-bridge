@@ -16,8 +16,8 @@ import net.minecraft.resources.Identifier;
  * 改成通过这几个包向服务端要数据。
  */
 public final class ModPayloads {
-    /** 单个分包大小，32KB 对 MC 的网络层比较友好。 */
-    public static final int CHUNK_SIZE = 32 * 1024;
+    /** 单个分包大小。太大容易把连接堵住、把 keep-alive 挤掉。 */
+    public static final int CHUNK_SIZE = 16 * 1024;
 
     /** 不会真正被解析的保留域名（RFC 2606）。 */
     public static final String FAKE_HOST = "netmusic-splayer-bridge.invalid";

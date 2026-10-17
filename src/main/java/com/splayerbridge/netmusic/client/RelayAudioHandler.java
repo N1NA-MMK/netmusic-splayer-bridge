@@ -36,6 +36,7 @@ public final class RelayAudioHandler implements IAudioStreamHandler {
         if (songId < 0) {
             throw new IOException("无法解析音频地址: " + url);
         }
+        SPlayerBridge.LOGGER.info("[SPlayerBridge] 拦截到音频地址: {}（改走游戏端口）", url);
         BufferedInputStream buffered = new MusicBufferedInputStream(ClientTransport.open(songId));
         Mp3Util.skipID3(buffered);
         return AudioSystem.getAudioInputStream(buffered);

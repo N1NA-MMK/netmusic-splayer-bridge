@@ -25,8 +25,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * 避免把 Netty 的写缓冲撑爆。
  */
 public final class PacketTransportServer {
-    private static final long WINDOW_BYTES = 4L * 1024 * 1024;
-    private static final int MAX_CHUNKS_PER_TICK = 8;
+    /** 在途数据上限。不要太大，否则会把游戏连接堵死、把 keep-alive 挤掉导致客户端超时掉线。 */
+    private static final long WINDOW_BYTES = 1024L * 1024;
+    /** 每 tick 最多发几块（4 × 16KB ≈ 1.25MB/s，足够跟上播放速度）。 */
+    private static final int MAX_CHUNKS_PER_TICK = 4;
+    /** 客户端这么久没有任何 ack，就认为它已经不听了。 */
+    private static final long IDLE_TIMEOUT_MILLIS = 30_000L;
 
     private static final Map<UUID, Session> SESSIONS = new ConcurrentHashMap<>();
 
@@ -86,6 +90,7 @@ public final class PacketTransportServer {
         }
         if (payload.consumed() > 0) {
             session.acked += payload.consumed();
+            session.lastAckMillis = System.currentTimeMillis();
         }
     }
 
@@ -101,6 +106,9 @@ public final class PacketTransportServer {
         private long sent;
         private long acked;
         private boolean closed;
+        private boolean loggedFirstChunk;
+        private long lastAckMillis = System.currentTimeMillis();
+        private long lastLogMillis;
 
         private Session(int id, ServerPlayer player, long songId) {
             this.id = id;
@@ -151,6 +159,27 @@ public final class PacketTransportServer {
                 position += length;
                 sent += length;
                 chunks++;
+                if (!loggedFirstChunk) {
+                    loggedFirstChunk = true;
+                    SPlayerBridge.LOGGER.info("[SPlayerBridge] 开始下发 id={}（缓存 {}/{} KB）",
+                            songId, available / 1024, complete ? file.length() / 1024 : -1);
+                }
+            }
+
+            long now = System.currentTimeMillis();
+            if (now - lastLogMillis > 2000) {
+                lastLogMillis = now;
+                if (sent > acked) {
+                    SPlayerBridge.LOGGER.info("[SPlayerBridge] 下发进度 id={}: 已发 {} KB，客户端确认 {} KB",
+                            songId, sent / 1024, acked / 1024);
+                }
+            }
+            // 客户端长时间不消费，说明它没在播，直接收摊，别占着文件句柄
+            if (sent > acked && now - lastAckMillis > IDLE_TIMEOUT_MILLIS) {
+                SPlayerBridge.LOGGER.warn("[SPlayerBridge] 客户端 {} 秒没有确认数据，停止下发 id={}",
+                        IDLE_TIMEOUT_MILLIS / 1000, songId);
+                close();
+                return;
             }
 
             if (!complete && download != null) {
