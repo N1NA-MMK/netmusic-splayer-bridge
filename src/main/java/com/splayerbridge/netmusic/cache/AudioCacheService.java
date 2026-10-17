@@ -28,11 +28,12 @@ public final class AudioCacheService {
             return;
         }
         AudioCache.init(config);
-        if (config.cacheEnabled && !AudioCache.isPacketTransport()) {
-            // packet 模式走游戏端口，不需要再占一个端口
+        if (config.cacheEnabled && !AudioCache.isPacketTransport() && !AudioCache.isDirectTransport()) {
             CacheHttpServer.start(AudioCache.directory(), config);
         } else if (AudioCache.isPacketTransport()) {
             SPlayerBridge.LOGGER.info("[SPlayerBridge] 下发方式为游戏端口分包，客户端需要安装本模组");
+        } else if (AudioCache.isDirectTransport()) {
+            SPlayerBridge.LOGGER.info("[SPlayerBridge] 下发方式为客户端直连，服务端只负责解锁，不做缓存下发");
         }
         started = true;
         startProbe();

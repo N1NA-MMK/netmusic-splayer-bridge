@@ -42,7 +42,10 @@ public final class SPlayerSongResolver implements IAsyncSongUrlResolver {
         }
 
         BridgeConfig config = SPlayerBridge.config();
-        Optional<String> cachedName = AudioCache.fileName(songId);
+        boolean direct = AudioCache.isDirectTransport();
+
+        // direct 模式下不读缓存：客户端直接去 CDN 取，缓存在服务端也没法给它
+        Optional<String> cachedName = direct ? Optional.empty() : AudioCache.fileName(songId);
         if (cachedName.isPresent()) {
             Optional<String> url = AudioCache.urlFor(songId, cachedName.get());
             if (url.isPresent()) {
@@ -60,6 +63,13 @@ public final class SPlayerSongResolver implements IAsyncSongUrlResolver {
         return SPlayerApi.unlock(songId, songInfo.songName, artist).thenApply(result -> {
             if (result.isPresent()) {
                 String audioUrl = result.get();
+                if (direct) {
+                    // 客户端自己连网易云 CDN，服务端不参与传输
+                    songInfo.songUrl = audioUrl;
+                    SPlayerBridge.LOGGER.info("[SPlayerBridge] 已解锁，客户端直连: {} (id={})",
+                            songInfo.songName, songId);
+                    return songInfo;
+                }
                 Optional<String> url = AudioCache.ensure(songId, audioUrl)
                         .flatMap(name -> AudioCache.urlFor(songId, name));
                 if (url.isPresent()) {

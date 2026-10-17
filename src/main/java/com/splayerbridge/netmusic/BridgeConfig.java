@@ -37,6 +37,8 @@ public class BridgeConfig {
      * <ul>
      *     <li><code>http</code>：服务端开一个本地 HTTP 服务（默认 25885），客户端直接连这个端口。客户端不需要装本模组。</li>
      *     <li><code>packet</code>：通过游戏端口分包传输。客户端也要装本模组，适合 frp 反代 / 只映射了游戏端口的服务器。</li>
+     *     <li><code>direct</code>：不做中转，直接把解锁出来的直链交给客户端，让它自己去网易云 CDN 取。
+     *         最省事、不需要任何端口，代价是没有缓存加速，而且客户端要能访问网易云。</li>
      * </ul>
      */
     public String transport = "http";
@@ -167,7 +169,7 @@ public class BridgeConfig {
             transport = "http";
         }
         transport = transport.trim().toLowerCase(java.util.Locale.ROOT);
-        if (!"packet".equals(transport) && !"http".equals(transport)) {
+        if (!"packet".equals(transport) && !"http".equals(transport) && !"direct".equals(transport)) {
             transport = "http";
         }
         if (unlockEndpoints == null || unlockEndpoints.isEmpty()) {

@@ -253,6 +253,10 @@ public final class AudioCache {
         return "packet".equalsIgnoreCase(SPlayerBridge.config().transport);
     }
 
+    public static boolean isDirectTransport() {
+        return "direct".equalsIgnoreCase(SPlayerBridge.config().transport);
+    }
+
     private static Download start(long songId, String remoteUrl) {
         String extension = extensionFromUrl(remoteUrl);
         Path file = dir.resolve(songId + "." + extension);

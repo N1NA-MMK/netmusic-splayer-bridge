@@ -62,7 +62,8 @@ public final class BridgeCommand {
                         config.splayerBaseUrl,
                         SPlayerApi.isAlive() ? "在线" : "离线",
                         probeAge < 0 ? "尚未探测" : probeAge + " 秒前探测",
-                        AudioCache.isPacketTransport() ? "游戏端口分包" : "HTTP",
+                        AudioCache.isPacketTransport() ? "游戏端口分包"
+                                : AudioCache.isDirectTransport() ? "客户端直连" : "HTTP",
                         transcode,
                         AudioCache.count(),
                         AudioCache.directory() == null ? "-" : AudioCache.directory(),
