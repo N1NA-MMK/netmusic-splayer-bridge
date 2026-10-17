@@ -28,8 +28,11 @@ public final class AudioCacheService {
             return;
         }
         AudioCache.init(config);
-        if (config.cacheEnabled) {
+        if (config.cacheEnabled && !AudioCache.isPacketTransport()) {
+            // packet 模式走游戏端口，不需要再占一个端口
             CacheHttpServer.start(AudioCache.directory(), config);
+        } else if (AudioCache.isPacketTransport()) {
+            SPlayerBridge.LOGGER.info("[SPlayerBridge] 下发方式为游戏端口分包，客户端需要安装本模组");
         }
         started = true;
         startProbe();

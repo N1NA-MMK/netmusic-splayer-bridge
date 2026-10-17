@@ -35,6 +35,10 @@ public class SPlayerBridge implements ModInitializer {
     public void onInitialize() {
         config = BridgeConfig.load();
 
+        // 网络包两侧都要注册
+        com.splayerbridge.netmusic.net.ModPayloads.register();
+        com.splayerbridge.netmusic.net.PacketTransportServer.init();
+
         // 必须在 NetMusic 冻结解析器列表（AllModLoadedEvent）之前注册
         MusicPlayResolverManager.registerResolver(new SPlayerSongResolver());
 
@@ -44,8 +48,8 @@ public class SPlayerBridge implements ModInitializer {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 dispatcher.register(BridgeCommand.build()));
 
-        LOGGER.info("[SPlayerBridge] 已加载，SPlayer 地址: {}，缓存: {}",
-                config.splayerBaseUrl, config.cacheEnabled ? config.cacheDir : "已关闭");
+        LOGGER.info("[SPlayerBridge] 已加载，SPlayer 地址: {}，下发方式: {}，缓存: {}",
+                config.splayerBaseUrl, config.transport, config.cacheEnabled ? config.cacheDir : "已关闭");
     }
 
     /**

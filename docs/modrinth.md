@@ -86,6 +86,7 @@ VIP 网易云歌曲改走服务端 SPlayer，服务端中转 + 边下边播 + �
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
 | `splayerBaseUrl` | `http://127.0.0.1:25884` | SPlayer 地址 |
+| `transport` | `http` | `http`：客户端连服务端端口（不用装模组）；`packet`：走游戏端口分包（客户端必须装） |
 | `preferForAllNeteaseSongs` | `false` | 为 true 时非 VIP 歌曲也走 SPlayer |
 | `cacheEnabled` | `true` | 是否缓存到磁盘 |
 | `cacheDir` | `netmusic_splayer_cache` | 缓存目录 |

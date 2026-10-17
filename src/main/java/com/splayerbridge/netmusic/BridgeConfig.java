@@ -33,6 +33,15 @@ public class BridgeConfig {
     public String splayerBaseUrl = "http://127.0.0.1:25884";
 
     /**
+     * 音频怎么下发给客户端：
+     * <ul>
+     *     <li><code>http</code>：服务端开一个本地 HTTP 服务（默认 25885），客户端直接连这个端口。客户端不需要装本模组。</li>
+     *     <li><code>packet</code>：通过游戏端口分包传输。客户端也要装本模组，适合 frp 反代 / 只映射了游戏端口的服务器。</li>
+     * </ul>
+     */
+    public String transport = "http";
+
+    /**
      * 解锁接口候选列表，按顺序尝试，{id} 会被替换为网易云歌曲 ID。
      * <p>
      * 新版 SPlayer 的接口是 <code>/api/unblock/netease</code>；
@@ -125,6 +134,13 @@ public class BridgeConfig {
         }
         while (splayerBaseUrl.endsWith("/")) {
             splayerBaseUrl = splayerBaseUrl.substring(0, splayerBaseUrl.length() - 1);
+        }
+        if (transport == null || transport.isBlank()) {
+            transport = "http";
+        }
+        transport = transport.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!"packet".equals(transport) && !"http".equals(transport)) {
+            transport = "http";
         }
         if (unlockEndpoints == null || unlockEndpoints.isEmpty()) {
             unlockEndpoints = new ArrayList<>(List.of("/api/unblock/netease?id={id}"));

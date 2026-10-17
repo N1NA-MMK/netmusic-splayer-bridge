@@ -16,6 +16,8 @@ import java.nio.file.Path;
 import java.util.Collections;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Pattern;
@@ -34,6 +36,12 @@ public final class CacheHttpServer {
     private static final Pattern FILE_NAME = Pattern.compile("^\\d+\\.[a-z0-9]{2,5}$");
     private static final String PREFIX = "/audio/";
 
+    /** 这些名字的网卡基本都是虚拟网卡，客户端访问不到，自动选地址时要跳过。 */
+    private static final String[] VIRTUAL_NIC_KEYWORDS = {
+            "vethernet", "hyper-v", "wsl", "docker", "br-", "veth", "vmnet", "virtualbox", "vbox",
+            "tailscale", "zerotier", "wireguard", "openvpn", "tap-", "tun", "vpn", "bluetooth", "npcap"
+    };
+
     /** 下载开始后等待首字节的最长时间。 */
     private static final long FIRST_BYTE_TIMEOUT_MILLIS = 20_000L;
     /** 流式下发过程中，连续多久没有新数据就断开。 */
@@ -44,6 +52,8 @@ public final class CacheHttpServer {
     private static String baseUrl;
     private static int port;
     private static Path root;
+    /** 已经打印过「客户端来取音频」的歌曲，避免刷屏。 */
+    private static final Set<Long> LOGGED_SONGS = ConcurrentHashMap.newKeySet();
 
     private CacheHttpServer() {
     }
@@ -118,25 +128,74 @@ public final class CacheHttpServer {
             return "127.0.0.1";
         }
         String lan = findLanAddress();
-        return lan != null ? lan : "127.0.0.1";
+        if (lan != null) {
+            SPlayerBridge.LOGGER.info("[SPlayerBridge] 自动选择的局域网地址: {}（不对就改配置里的 publicHost）", lan);
+            return lan;
+        }
+        return "127.0.0.1";
     }
 
+    /**
+     * 选一个客户端最可能访问得到的地址。
+     * <p>
+     * 机器上经常有 Hyper-V / WSL / Docker / VPN 之类的虚拟网卡（例如 172.16.x.x），
+     * 它们排在真实网卡前面时会被选中，客户端根本连不上，所以这里按网卡名过滤 + 网段打分。
+     */
     private static String findLanAddress() {
+        String best = null;
+        int bestScore = Integer.MIN_VALUE;
         try {
             for (NetworkInterface nic : Collections.list(NetworkInterface.getNetworkInterfaces())) {
-                if (!nic.isUp() || nic.isLoopback() || nic.isVirtual()) {
+                if (!nic.isUp() || nic.isLoopback() || nic.isVirtual() || isVirtualNic(nic.getName())) {
                     continue;
                 }
                 for (InetAddress address : Collections.list(nic.getInetAddresses())) {
-                    if (address.getAddress().length == 4 && address.isSiteLocalAddress()) {
-                        return address.getHostAddress();
+                    if (address.getAddress().length != 4 || !address.isSiteLocalAddress()) {
+                        continue;
+                    }
+                    int score = scoreAddress(address);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        best = address.getHostAddress();
                     }
                 }
             }
         } catch (Exception ignored) {
             // 忽略，回退到回环地址
         }
-        return null;
+        return best;
+    }
+
+    private static boolean isVirtualNic(String name) {
+        if (name == null) {
+            return false;
+        }
+        String lower = name.toLowerCase(Locale.ROOT);
+        for (String keyword : VIRTUAL_NIC_KEYWORDS) {
+            if (lower.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 192.168 最像家用/办公局域网，其次 10.x，最后 172.16-31（Docker/WSL 常用）。
+     */
+    private static int scoreAddress(InetAddress address) {
+        byte[] bytes = address.getAddress();
+        int first = bytes[0] & 0xFF;
+        int second = bytes[1] & 0xFF;
+        if (first == 192 && second == 168) {
+            return 100;
+        }
+        if (first == 10) {
+            return 90;
+        }
+        if (first == 172 && second >= 16 && second <= 31) {
+            return 40;
+        }
+        return 60;
     }
 
     private static void handle(HttpExchange exchange) throws IOException {
@@ -164,6 +223,11 @@ public final class CacheHttpServer {
                 return;
             }
 
+            if (LOGGED_SONGS.add(songId)) {
+                SPlayerBridge.LOGGER.info("[SPlayerBridge] 客户端来取音频: {}（来自 {}）",
+                        name, exchange.getRemoteAddress());
+            }
+
             Optional<Path> complete = AudioCache.findComplete(songId);
             if (complete.isPresent() && complete.get().getFileName().toString().equals(name)) {
                 serveFile(exchange, complete.get(), method);
@@ -177,6 +241,7 @@ public final class CacheHttpServer {
             }
 
             exchange.sendResponseHeaders(404, -1);
+            SPlayerBridge.LOGGER.warn("[SPlayerBridge] 客户端请求了不存在的音频: {}（缓存里没有这首）", name);
         } catch (Exception e) {
             SPlayerBridge.LOGGER.debug("[SPlayerBridge] 音频请求处理失败: {}", e.getMessage());
         } finally {

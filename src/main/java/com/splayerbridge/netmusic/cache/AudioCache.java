@@ -192,44 +192,56 @@ public final class AudioCache {
     }
 
     /**
-     * 已完整缓存的歌曲对应的下发地址。
+     * 已完整缓存的歌曲文件名（例如 <code>2051267438.flac</code>）。
      */
-    public static Optional<String> cachedUrl(long songId) {
+    public static Optional<String> fileName(long songId) {
         if (!SPlayerBridge.config().cacheEnabled) {
             return Optional.empty();
         }
-        String base = CacheHttpServer.baseUrl();
-        if (base == null) {
-            return Optional.empty();
-        }
-        return findComplete(songId).map(file -> base + "/audio/" + file.getFileName());
+        return findComplete(songId).map(file -> file.getFileName().toString());
     }
 
     /**
-     * 开始（或复用）一首歌的下载，并立刻返回服务端的下发地址。
+     * 确保这首歌有数据：已缓存直接返回文件名，否则开始下载并返回即将生成的文件名。
      * <p>
-     * 返回后客户端就会来连这个地址，没数据时会在 HTTP 层等待，实现「服务端拿到音频再给客户端」。
+     * 返回后调用方就能把地址交给客户端了——客户端来取数据时会等，服务端下到哪发到哪。
      *
-     * @return 本地地址；缓存被关闭或文件服务不可用时返回 empty，调用方应回退到远端直链
+     * @return 文件名；缓存被关闭或目录不可用时返回 empty，调用方应回退到远端直链
      */
-    public static Optional<String> beginDownload(long songId, String remoteUrl) {
+    public static Optional<String> ensure(long songId, String remoteUrl) {
         BridgeConfig config = SPlayerBridge.config();
         if (!config.cacheEnabled || dir == null) {
             return Optional.empty();
         }
-        String base = CacheHttpServer.baseUrl();
-        if (base == null) {
-            return Optional.empty();
-        }
         Optional<Path> done = findComplete(songId);
         if (done.isPresent()) {
-            return Optional.of(base + "/audio/" + done.get().getFileName());
+            return Optional.of(done.get().getFileName().toString());
         }
         Download download = ACTIVE.get(songId);
         if (download == null) {
             download = start(songId, remoteUrl);
         }
-        return Optional.of(base + "/audio/" + download.file().getFileName());
+        return Optional.of(download.file().getFileName().toString());
+    }
+
+    /**
+     * 根据配置生成交给客户端的地址。
+     * <ul>
+     *     <li>http：内置 HTTP 服务（默认，客户端不用装本模组）</li>
+     *     <li>packet：走游戏端口分包（客户端也要装本模组，适合 frp/端口受限的服务器）</li>
+     * </ul>
+     */
+    public static Optional<String> urlFor(long songId, String fileName) {
+        if (isPacketTransport()) {
+            return Optional.of("http://" + com.splayerbridge.netmusic.net.ModPayloads.FAKE_HOST
+                    + "/audio/" + fileName);
+        }
+        String base = CacheHttpServer.baseUrl();
+        return base == null ? Optional.empty() : Optional.of(base + "/audio/" + fileName);
+    }
+
+    public static boolean isPacketTransport() {
+        return "packet".equalsIgnoreCase(SPlayerBridge.config().transport);
     }
 
     private static Download start(long songId, String remoteUrl) {

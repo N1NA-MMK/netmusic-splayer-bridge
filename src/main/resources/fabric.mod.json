@@ -12,6 +12,9 @@
   "entrypoints": {
     "main": [
       "com.splayerbridge.netmusic.SPlayerBridge"
+    ],
+    "client": [
+      "com.splayerbridge.netmusic.client.SPlayerBridgeClient"
     ]
   },
   "depends": {

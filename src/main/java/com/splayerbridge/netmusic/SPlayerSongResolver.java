@@ -42,13 +42,16 @@ public final class SPlayerSongResolver implements IAsyncSongUrlResolver {
         }
 
         BridgeConfig config = SPlayerBridge.config();
-        Optional<String> cached = AudioCache.cachedUrl(songId);
-        if (cached.isPresent()) {
-            songInfo.songUrl = cached.get();
-            if (config.logCacheHits) {
-                SPlayerBridge.LOGGER.info("[SPlayerBridge] 缓存命中: {} (id={})", songInfo.songName, songId);
+        Optional<String> cachedName = AudioCache.fileName(songId);
+        if (cachedName.isPresent()) {
+            Optional<String> url = AudioCache.urlFor(songId, cachedName.get());
+            if (url.isPresent()) {
+                songInfo.songUrl = url.get();
+                if (config.logCacheHits) {
+                    SPlayerBridge.LOGGER.info("[SPlayerBridge] 缓存命中: {} (id={})", songInfo.songName, songId);
+                }
+                return CompletableFuture.completedFuture(songInfo);
             }
-            return CompletableFuture.completedFuture(songInfo);
         }
 
         List<String> artists = songInfo.artists;
@@ -57,14 +60,15 @@ public final class SPlayerSongResolver implements IAsyncSongUrlResolver {
         return SPlayerApi.unlock(songId, songInfo.songName, artist).thenApply(result -> {
             if (result.isPresent()) {
                 String audioUrl = result.get();
-                Optional<String> local = AudioCache.beginDownload(songId, audioUrl);
-                if (local.isPresent()) {
-                    // 交给客户端的是服务端地址：客户端连上来等数据，服务端边下边发
-                    songInfo.songUrl = local.get();
-                    SPlayerBridge.LOGGER.info("[SPlayerBridge] 已解锁并由服务端转发: {} (id={})",
-                            songInfo.songName, songId);
+                Optional<String> url = AudioCache.ensure(songId, audioUrl)
+                        .flatMap(name -> AudioCache.urlFor(songId, name));
+                if (url.isPresent()) {
+                    // 交给客户端的是服务端地址：客户端来取数据时服务端边下边发
+                    songInfo.songUrl = url.get();
+                    SPlayerBridge.LOGGER.info("[SPlayerBridge] 已解锁并由服务端转发: {} (id={}, {})",
+                            songInfo.songName, songId, AudioCache.isPacketTransport() ? "游戏端口" : "HTTP");
                 } else {
-                    // 缓存/下发服务不可用时退回直链，至少还能播
+                    // 缓存/下发不可用时退回直链，至少还能播
                     songInfo.songUrl = audioUrl;
                     SPlayerBridge.LOGGER.warn("[SPlayerBridge] 服务端下发不可用，客户端将直连: {} (id={})",
                             songInfo.songName, songId);
