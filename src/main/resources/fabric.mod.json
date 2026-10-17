@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "netmusic_splayer_bridge",
+  "version": "${version}",
+  "name": "Net Music: SPlayer Bridge",
+  "description": "为 NetMusic 提供 SPlayer 音源支持：播放 VIP 歌曲时优先从服务端 SPlayer 的解锁接口获取音频，并自动缓存到本地，下次直接播放缓存。",
+  "authors": [
+    "SPlayerBridge"
+  ],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.splayerbridge.netmusic.SPlayerBridge"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.2",
+    "minecraft": "~26.1.2",
+    "java": ">=25",
+    "fabric-api": "*",
+    "netmusic": ">=1.5.0"
+  }
+}

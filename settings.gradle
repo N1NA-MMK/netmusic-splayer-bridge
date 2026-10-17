@@ -1,0 +1,11 @@
+pluginManagement {
+    repositories {
+        // 国内镜像优先，避免从国外仓库拉插件超时
+        maven { url = 'https://maven.aliyun.com/repository/gradle-plugin' }
+        maven { url = 'https://maven.aliyun.com/repository/public' }
+        maven { url = 'https://maven.fabricmc.net/' }
+        gradlePluginPortal()
+    }
+}
+
+rootProject.name = 'netmusic-splayer-bridge'

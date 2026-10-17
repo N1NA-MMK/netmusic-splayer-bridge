@@ -1,0 +1,22 @@
+# Gradle / 构建产物
+.gradle/
+build/
+out/
+
+# 本地开发运行目录（含测试世界、缓存）
+run/
+libs/
+
+# 工具/IDE
+.workbuddy-ai/
+.idea/
+.vscode/
+*.iml
+
+# 日志
+*.log
+
+# gradle wrapper 的二进制/脚本由本地 `gradle wrapper` 生成，不入库
+gradlew
+gradlew.bat
+gradle/wrapper/gradle-wrapper.jar
