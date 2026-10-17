@@ -1,6 +1,8 @@
 name: release
 
 on:
+  push:
+    tags: [ 'v*' ]
   workflow_dispatch:
     inputs:
       version:
@@ -17,6 +19,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "resolved version: $VERSION"
+
       - name: Set up JDK 25
         uses: actions/setup-java@v4
         with:
@@ -29,12 +41,12 @@ jobs:
           gradle-version: '9.6.1'
 
       - name: Build
-        run: gradle build -Pmod_version=${{ inputs.version }} --stacktrace
+        run: gradle build -Pmod_version="$VERSION" --stacktrace
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ inputs.version }}
-          name: v${{ inputs.version }}
+          tag_name: v${{ env.VERSION }}
+          name: v${{ env.VERSION }}
           generate_release_notes: true
           files: build/libs/*.jar
