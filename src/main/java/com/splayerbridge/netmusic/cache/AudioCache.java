@@ -15,6 +15,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -59,6 +61,8 @@ public final class AudioCache {
 
     private static volatile Path dir;
     private static volatile Semaphore permits = new Semaphore(2);
+    /** ffmpeg 探测结果，null = 还没探测过。 */
+    private static volatile Boolean ffmpegOk;
 
     private AudioCache() {
     }
@@ -340,6 +344,11 @@ public final class AudioCache {
             INDEX.put(download.songId, download.file);
             SPlayerBridge.LOGGER.info("[SPlayerBridge] 已缓存歌曲 {}（{} KB）",
                     download.songId, total / 1024);
+
+            // 顺手转成 mp3，下次下发能省一大半流量（首次播放可能还在读原文件，删不掉就算了）
+            if (shouldTranscode() && !"mp3".equals(extensionOf(download.file))) {
+                tryTranscode(download.songId, download.file);
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             fail(download, "线程中断");
@@ -363,6 +372,138 @@ public final class AudioCache {
         download.failed = true;
         download.error = reason;
         SPlayerBridge.LOGGER.warn("[SPlayerBridge] 缓存歌曲 {} 失败: {}", download.songId, reason);
+    }
+
+    // ------------------------------------------------------------------
+    // 转码（ffmpeg）
+    // ------------------------------------------------------------------
+
+    /**
+     * 是否要把音频转成 mp3 再下发。
+     */
+    public static boolean shouldTranscode() {
+        String mode = SPlayerBridge.config().transcode;
+        if ("off".equalsIgnoreCase(mode)) {
+            return false;
+        }
+        if ("mp3".equalsIgnoreCase(mode)) {
+            return true;
+        }
+        return ffmpegAvailable();
+    }
+
+    /**
+     * 探测一次 ffmpeg 是否可用，结果缓存起来。
+     */
+    public static boolean ffmpegAvailable() {
+        Boolean cached = ffmpegOk;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (AudioCache.class) {
+            if (ffmpegOk != null) {
+                return ffmpegOk;
+            }
+            boolean ok = false;
+            try {
+                Process process = new ProcessBuilder(SPlayerBridge.config().ffmpegPath, "-version")
+                        .redirectErrorStream(true)
+                        .start();
+                try (InputStream in = process.getInputStream()) {
+                    in.readAllBytes();
+                }
+                ok = process.waitFor(10, TimeUnit.SECONDS) && process.exitValue() == 0;
+            } catch (Exception ignored) {
+            }
+            if (!ok) {
+                SPlayerBridge.LOGGER.warn("[SPlayerBridge] 没找到 ffmpeg（{}），将直接下发原始音频。"
+                        + "装一个 ffmpeg 或改配置里的 ffmpegPath 就能开启转码。",
+                        SPlayerBridge.config().ffmpegPath);
+            }
+            ffmpegOk = ok;
+            return ok;
+        }
+    }
+
+    /**
+     * 把已经缓存好的文件批量转成 mp3，返回排队的数量；-1 表示 ffmpeg 不可用。
+     */
+    public static int transcodeAll() {
+        if (!ffmpegAvailable()) {
+            return -1;
+        }
+        int queued = 0;
+        for (Map.Entry<Long, Path> entry : new ArrayList<>(INDEX.entrySet())) {
+            Path file = entry.getValue();
+            if ("mp3".equals(extensionOf(file))) {
+                continue;
+            }
+            long songId = entry.getKey();
+            Async.download().submit(() -> tryTranscode(songId, file));
+            queued++;
+        }
+        return queued;
+    }
+
+    private static void tryTranscode(long songId, Path source) {
+        try {
+            long before = Files.size(source);
+            Path mp3 = transcode(source, songId);
+            INDEX.put(songId, mp3);
+            try {
+                Files.deleteIfExists(source);
+            } catch (Exception ignored) {
+                // 可能正被播放中的会话占用，留着也无妨
+            }
+            SPlayerBridge.LOGGER.info("[SPlayerBridge] 已转码 mp3: 歌曲 {}（{} KB → {} KB）",
+                    songId, before / 1024, Files.size(mp3) / 1024);
+        } catch (Exception e) {
+            SPlayerBridge.LOGGER.warn("[SPlayerBridge] 转码失败，保留原始文件: {}", e.getMessage());
+        }
+    }
+
+    private static Path transcode(Path source, long songId) throws Exception {
+        BridgeConfig config = SPlayerBridge.config();
+        Path target = source.resolveSibling(songId + ".mp3");
+        Path temp = source.resolveSibling(songId + ".mp3.part");
+        List<String> command = List.of(
+                config.ffmpegPath,
+                "-y", "-hide_banner", "-loglevel", "error",
+                "-i", source.toString(),
+                "-vn",
+                "-c:a", "libmp3lame",
+                "-b:a", config.transcodeBitrateKbps + "k",
+                "-f", "mp3",
+                temp.toString());
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+        String output;
+        try (InputStream in = process.getInputStream()) {
+            output = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        if (!process.waitFor(300, TimeUnit.SECONDS)) {
+            process.destroyForcibly();
+            throw new java.io.IOException("ffmpeg 超时");
+        }
+        if (process.exitValue() != 0) {
+            try {
+                Files.deleteIfExists(temp);
+            } catch (Exception ignored) {
+            }
+            throw new java.io.IOException("ffmpeg 退出码 " + process.exitValue() + ": " + output.trim());
+        }
+        try {
+            Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        } catch (Exception e) {
+            Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
+        return target;
+    }
+
+    private static String extensionOf(Path file) {
+        String name = file.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        return dot < 0 ? "" : name.substring(dot + 1).toLowerCase(Locale.ROOT);
     }
 
     /**

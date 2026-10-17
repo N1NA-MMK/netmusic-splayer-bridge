@@ -35,6 +35,8 @@
   - `packet`：**通过游戏端口分包传输**（32KB 一块，带 ack 流量控制）。客户端**必须也装本模组**。适合 frp 反代、只映射了游戏端口、或者端口不通的服务器。
 - **客户端全程不直连网易云**：首次播放时客户端拿到的也是服务端地址，连上后服务端下到哪发到哪（首字节通常 1 秒内），播完这首文件也就缓存好了，下次直接读磁盘。
 - 缓存文件在下载过程中带一个 `<id>.<ext>.part` 标记，下完才删；中途退出游戏不会留下半首歌被当成完整缓存。
+- **转码**：服务端下载完成后会用 ffmpeg 转成 mp3（默认 192k）存进缓存，下次下发体积只有原来的 1/3 左右。
+  首次播放是边下边播的原始文件，转码在后台完成；已经缓存的老文件用 `/splayerbridge cache transcode` 批量转换。
 
 ## 安装
 
@@ -64,6 +66,9 @@
 | `cacheBindAddress` | `0.0.0.0` | 文件服务监听地址 |
 | `publicHost` | `auto` | 下发地址里的主机名；单人游戏用 `127.0.0.1`，专用服务端自动取局域网 IP |
 | `maxConcurrentDownloads` | `2` | 同时下载缓存的数量 |
+| `transcode` | `auto` | 是否用 ffmpeg 转成 mp3 再下发：`auto`（有 ffmpeg 就转）/ `off` / `mp3` |
+| `transcodeBitrateKbps` | `192` | 转码码率，想更省流量可以调 `128` |
+| `ffmpegPath` | `ffmpeg` | ffmpeg 路径，默认走 PATH |
 | `packetWindowKb` | `1024` | packet 模式预读窗口。客户端按播放速度消费，窗口决定能提前缓冲多少；调大（如 `32768`）可一次把整首拉过去，但更吃带宽和内存 |
 | `packetChunksPerTick` | `4` | packet 模式每 tick 最多发几块（16KB/块）。4 ≈ 1.25MB/s，网络差就调小 |
 | `logCacheHits` | `true` | 是否记录缓存命中日志 |
@@ -79,9 +84,10 @@
 需要 OP（权限等级 2）：
 
 ```
-/splayerbridge status        查看开关、SPlayer 在线状态、缓存数量、缓存服务地址
-/splayerbridge reload        重新读取配置（会重启缓存服务）
-/splayerbridge cache clear   清空缓存
+/splayerbridge status          查看开关、SPlayer 在线状态、下发方式、缓存数量
+/splayerbridge reload          重新读取配置（会重启缓存服务）
+/splayerbridge cache clear     清空缓存
+/splayerbridge cache transcode 把已有缓存批量转成 mp3（需要 ffmpeg）
 ```
 
 ## 说明 / 已知限制

@@ -94,6 +94,22 @@ public class BridgeConfig {
     public int maxConcurrentDownloads = 2;
 
     /**
+     * 是否把音频转成 mp3 再下发给客户端（能显著减少 frp 流量）。
+     * <ul>
+     *     <li><code>auto</code>：找得到 ffmpeg 就转（默认）</li>
+     *     <li><code>off</code>：不转，原样下发</li>
+     *     <li><code>mp3</code>：强制转（找不到 ffmpeg 时回退到原始文件）</li>
+     * </ul>
+     */
+    public String transcode = "auto";
+
+    /** 转码码率（kbps）。192 对游戏内播放足够，想更省流量可以调 128。 */
+    public int transcodeBitrateKbps = 192;
+
+    /** ffmpeg 可执行文件路径，默认走 PATH。 */
+    public String ffmpegPath = "ffmpeg";
+
+    /**
      * packet 模式下客户端的预读窗口（KB）。
      * <p>
      * 客户端是按播放速度消费的，所以这个窗口决定「能提前缓冲多少」：
@@ -177,6 +193,17 @@ public class BridgeConfig {
         maxConcurrentDownloads = Math.max(1, Math.min(maxConcurrentDownloads, 8));
         packetWindowKb = Math.max(256, Math.min(packetWindowKb, 65536));
         packetChunksPerTick = Math.max(1, Math.min(packetChunksPerTick, 32));
+        if (transcode == null || transcode.isBlank()) {
+            transcode = "auto";
+        }
+        transcode = transcode.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!"auto".equals(transcode) && !"off".equals(transcode) && !"mp3".equals(transcode)) {
+            transcode = "auto";
+        }
+        transcodeBitrateKbps = Math.max(64, Math.min(transcodeBitrateKbps, 320));
+        if (ffmpegPath == null || ffmpegPath.isBlank()) {
+            ffmpegPath = "ffmpeg";
+        }
         return this;
     }
 
