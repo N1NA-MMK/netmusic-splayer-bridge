@@ -64,6 +64,8 @@
 | `cacheBindAddress` | `0.0.0.0` | 文件服务监听地址 |
 | `publicHost` | `auto` | 下发地址里的主机名；单人游戏用 `127.0.0.1`，专用服务端自动取局域网 IP |
 | `maxConcurrentDownloads` | `2` | 同时下载缓存的数量 |
+| `packetWindowKb` | `1024` | packet 模式预读窗口。客户端按播放速度消费，窗口决定能提前缓冲多少；调大（如 `32768`）可一次把整首拉过去，但更吃带宽和内存 |
+| `packetChunksPerTick` | `4` | packet 模式每 tick 最多发几块（16KB/块）。4 ≈ 1.25MB/s，网络差就调小 |
 | `logCacheHits` | `true` | 是否记录缓存命中日志 |
 
 > **联机提示**：单人游戏开「对局域网开放」、或专用服务端在 NAT 后面时，客户端不一定能访问到 `127.0.0.1`。

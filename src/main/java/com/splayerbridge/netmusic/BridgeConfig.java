@@ -93,6 +93,18 @@ public class BridgeConfig {
     /** 同时下载缓存的最大数量。 */
     public int maxConcurrentDownloads = 2;
 
+    /**
+     * packet 模式下客户端的预读窗口（KB）。
+     * <p>
+     * 客户端是按播放速度消费的，所以这个窗口决定「能提前缓冲多少」：
+     * 1MB 只够撑十几秒，传输会跟着播放进度慢慢走；调大（例如 16384）可以一次把整首拉过去，
+     * 但需要带宽足够，否则会把游戏连接堵住。
+     */
+    public int packetWindowKb = 1024;
+
+    /** packet 模式每 tick 最多发几块（16KB/块）。4 块 ≈ 1.25MB/s。 */
+    public int packetChunksPerTick = 4;
+
     /** 缓存命中时是否在日志里输出。 */
     public boolean logCacheHits = true;
 
@@ -163,6 +175,8 @@ public class BridgeConfig {
         requestTimeoutSeconds = Math.max(1, Math.min(requestTimeoutSeconds, 60));
         totalResolveTimeoutSeconds = Math.max(2, Math.min(totalResolveTimeoutSeconds, 120));
         maxConcurrentDownloads = Math.max(1, Math.min(maxConcurrentDownloads, 8));
+        packetWindowKb = Math.max(256, Math.min(packetWindowKb, 65536));
+        packetChunksPerTick = Math.max(1, Math.min(packetChunksPerTick, 32));
         return this;
     }
 

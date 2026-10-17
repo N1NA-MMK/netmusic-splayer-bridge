@@ -21,7 +21,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -40,6 +42,8 @@ public final class AudioCache {
     private static final Pattern CACHE_FILE = Pattern.compile("^(\\d+)\\.([a-z0-9]{2,5})$");
     private static final Pattern PART_FILE = Pattern.compile("^(\\d+)\\.([a-z0-9]{2,5})\\.part$");
     private static final long MAX_FILE_BYTES = 200L * 1024 * 1024;
+    /** 下载多久没有新数据就判定为卡死。 */
+    private static final long DOWNLOAD_STALL_MILLIS = 30_000L;
     private static final Set<String> AUDIO_EXTENSIONS =
             Set.of("mp3", "flac", "m4a", "aac", "wav", "ogg", "ape", "wma");
 
@@ -68,6 +72,7 @@ public final class AudioCache {
         private final Path marker;
 
         private volatile long written;
+        private volatile long lastWriteMillis = System.currentTimeMillis();
         private volatile boolean complete;
         private volatile boolean failed;
         private volatile String error = "";
@@ -280,7 +285,23 @@ public final class AudioCache {
             byte[] head = new byte[12];
             int headLength = 0;
             long total = 0;
-            try (InputStream in = response.body();
+            InputStream body = response.body();
+            // 网易云 CDN 偶尔会在传输中途卡死，read() 会一直阻塞，这里放个看门狗
+            ScheduledFuture<?> watchdog = Async.tick().scheduleAtFixedRate(() -> {
+                if (download.complete || download.failed) {
+                    return;
+                }
+                if (System.currentTimeMillis() - download.lastWriteMillis > DOWNLOAD_STALL_MILLIS) {
+                    SPlayerBridge.LOGGER.warn("[SPlayerBridge] 下载 {} 秒没有新数据，放弃: 歌曲 {}",
+                            DOWNLOAD_STALL_MILLIS / 1000, download.songId);
+                    try {
+                        body.close();
+                    } catch (Exception ignored) {
+                    }
+                }
+            }, 5, 5, TimeUnit.SECONDS);
+
+            try (InputStream in = body;
                  OutputStream out = Files.newOutputStream(download.file,
                          StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
                 byte[] buffer = new byte[64 * 1024];
@@ -295,11 +316,14 @@ public final class AudioCache {
                     out.flush();
                     total += read;
                     download.written = total;
+                    download.lastWriteMillis = System.currentTimeMillis();
                     if (total > MAX_FILE_BYTES) {
                         fail(download, "文件超过 200MB");
                         return;
                     }
                 }
+            } finally {
+                watchdog.cancel(false);
             }
 
             if (total < 4096) {

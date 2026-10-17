@@ -25,10 +25,6 @@ import java.util.concurrent.ConcurrentHashMap;
  * 避免把 Netty 的写缓冲撑爆。
  */
 public final class PacketTransportServer {
-    /** 在途数据上限。不要太大，否则会把游戏连接堵死、把 keep-alive 挤掉导致客户端超时掉线。 */
-    private static final long WINDOW_BYTES = 1024L * 1024;
-    /** 每 tick 最多发几块（4 × 16KB ≈ 1.25MB/s，足够跟上播放速度）。 */
-    private static final int MAX_CHUNKS_PER_TICK = 4;
     /** 客户端这么久没有任何 ack，就认为它已经不听了。 */
     private static final long IDLE_TIMEOUT_MILLIS = 30_000L;
 
@@ -149,8 +145,10 @@ public final class PacketTransportServer {
             }
 
             long available = complete ? file.length() : download.written();
+            long window = Math.max(256, SPlayerBridge.config().packetWindowKb) * 1024L;
+            int maxChunks = Math.max(1, SPlayerBridge.config().packetChunksPerTick);
             int chunks = 0;
-            while (chunks < MAX_CHUNKS_PER_TICK && sent - acked < WINDOW_BYTES && position < available) {
+            while (chunks < maxChunks && sent - acked < window && position < available) {
                 int length = (int) Math.min(ModPayloads.CHUNK_SIZE, available - position);
                 byte[] data = new byte[length];
                 file.seek(position);
@@ -174,11 +172,9 @@ public final class PacketTransportServer {
                             songId, sent / 1024, acked / 1024);
                 }
             }
-            // 客户端长时间不消费，说明它没在播，直接收摊，别占着文件句柄
+            // 客户端长时间不消费，说明它没在播（或者网络断了），通知一声再收摊
             if (sent > acked && now - lastAckMillis > IDLE_TIMEOUT_MILLIS) {
-                SPlayerBridge.LOGGER.warn("[SPlayerBridge] 客户端 {} 秒没有确认数据，停止下发 id={}",
-                        IDLE_TIMEOUT_MILLIS / 1000, songId);
-                close();
+                fail("客户端 " + (IDLE_TIMEOUT_MILLIS / 1000) + " 秒没有确认数据，可能是网络中断或播放已停止");
                 return;
             }
 
