@@ -72,7 +72,10 @@ public final class AudioCache {
      */
     public static final class Download {
         private final long songId;
-        private final Path file;
+        /**
+         * 最终下发给客户端的文件。转码完成后会从原始文件改成 mp3，所以不是 final。
+         */
+        private volatile Path file;
         private final Path marker;
 
         private volatile long written;
@@ -343,16 +346,39 @@ public final class AudioCache {
                 return;
             }
 
+            // NetMusic 的客户端用 AudioSystem.getAudioInputStream(InputStream) 打开音频，
+            // 遇到 FLAC 会被 mp3spi 先扫一遍，整个流读完之后 reset 超限，直接抛
+            // "Resetting to invalid mark" —— 实测无解，只能按扩展名选 SPI。
+            // 所以：只要开了转码，就必须先转完再交给客户端，绝不能把 FLAC 发出去。
+            Path finalFile = download.file;
+            String finalExtension = extensionOf(finalFile);
+            if (shouldTranscode() && !"mp3".equals(finalExtension)) {
+                try {
+                    long sourceSize = total;
+                    Path mp3 = transcode(finalFile, download.songId);
+                    try {
+                        Files.deleteIfExists(finalFile);
+                    } catch (Exception ignored) {
+                    }
+                    finalFile = mp3;
+                    SPlayerBridge.LOGGER.info("[SPlayerBridge] 已转码 mp3: 歌曲 {}（{} KB → {} KB）",
+                            download.songId, sourceSize / 1024, Files.size(mp3) / 1024);
+                } catch (Exception e) {
+                    SPlayerBridge.LOGGER.warn("[SPlayerBridge] 转码失败，按原格式下发（NetMusic 可能播不了）: {}",
+                            e.getMessage());
+                }
+            } else if (!"mp3".equals(finalExtension)) {
+                SPlayerBridge.LOGGER.warn("[SPlayerBridge] 歌曲 {} 是 {} 格式，NetMusic 客户端流式播放会失败，"
+                                + "建议安装 ffmpeg 并保持 transcode=auto",
+                        download.songId, finalExtension);
+            }
+
+            download.file = finalFile;
             download.complete = true;
             Files.deleteIfExists(download.marker);
-            INDEX.put(download.songId, download.file);
-            SPlayerBridge.LOGGER.info("[SPlayerBridge] 已缓存歌曲 {}（{} KB）",
-                    download.songId, total / 1024);
-
-            // 顺手转成 mp3，下次下发能省一大半流量（首次播放可能还在读原文件，删不掉就算了）
-            if (shouldTranscode() && !"mp3".equals(extensionOf(download.file))) {
-                tryTranscode(download.songId, download.file);
-            }
+            INDEX.put(download.songId, finalFile);
+            SPlayerBridge.LOGGER.info("[SPlayerBridge] 已缓存歌曲 {}（{} KB, {}）",
+                    download.songId, Files.size(finalFile) / 1024, extensionOf(finalFile));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             fail(download, "线程中断");

@@ -112,6 +112,14 @@ public class BridgeConfig {
     public String ffmpegPath = "ffmpeg";
 
     /**
+     * 修复 NetMusic 播放不了 FLAC 等格式的问题（仅客户端生效）。
+     * <p>
+     * NetMusic 是流式打开音频的，mp3spi 会先把流扫空再找同步字，遇到 FLAC 直接抛
+     * {@code IOException: Resetting to invalid mark}。开启后本模组会先把这类音频下载到本地再用文件方式打开。
+     */
+    public boolean fixFlac = true;
+
+    /**
      * packet 模式下客户端的预读窗口（KB）。
      * <p>
      * 客户端是按播放速度消费的，所以这个窗口决定「能提前缓冲多少」：
