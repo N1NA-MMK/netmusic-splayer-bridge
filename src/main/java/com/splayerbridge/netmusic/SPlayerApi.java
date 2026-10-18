@@ -177,7 +177,7 @@ public final class SPlayerApi {
             return Optional.empty();
         } catch (Exception e) {
             lastError = e.getClass().getSimpleName() + ": " + e.getMessage();
-            if (config.logCacheHits) {
+            if (config.logUnlocks) {
                 SPlayerBridge.LOGGER.debug("[SPlayerBridge] 解锁请求失败 {} -> {}", url, lastError);
             }
             return Optional.empty();

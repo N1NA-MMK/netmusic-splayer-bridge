@@ -1,31 +1,42 @@
 package com.splayerbridge.netmusic.mixin;
 
-import com.github.tartaricacid.netmusic.api.lyric.LyricRecord;
-import com.splayerbridge.netmusic.SPlayerBridge;
+import com.github.tartaricacid.netmusic.client.audio.NetMusicSound;
+import com.splayerbridge.netmusic.client.LyricGate;
+import com.splayerbridge.netmusic.net.Links;
+import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import java.net.URL;
 
 /**
- * 让歌词的时钟晚一点走。
+ * 音频还没真正开始放之前，冻结 NetMusicSound 的 tick。
  * <p>
- * NetMusic 的歌词是靠 {@code NetMusicSound.tick()} 里的 tick 驱动的，而音频是异步开始播放的：
- * 客户端收到地址那一刻就开始计 tick，等音频真的出声还要几百毫秒到几秒，歌词就整体超前。
+ * MC 的 SoundEngine 对流式声音是「先加进 tickingSounds（tick 开始计时，歌词跟着 tick 走），
+ * 同时异步拉音频流」，所以音频没出声歌词已经走了。
  * <p>
- * 这里把传给 {@code LyricRecord.updateCurrentLine} 的 tick 减去一个偏移，
- * 相当于把歌词整体往后推 {@code lyricOffsetTicks} 个 tick（20 tick = 1 秒）。
+ * 这里在音频就绪前直接取消整次 tick：歌词停住、停止判定也停住，等音频真的开始才一起走。
+ * 客户端 {@code RelayAudioHandler} 负责在音频就绪时解除门控。
  */
-@Mixin(targets = "com.github.tartaricacid.netmusic.client.audio.NetMusicSound", remap = false)
+@Mixin(value = NetMusicSound.class, remap = false)
 public abstract class NetMusicSoundMixin {
-    @Redirect(
-            method = "tick()V",
-            at = @At(
-                    value = "INVOKE",
-                    target = "Lcom/github/tartaricacid/netmusic/api/lyric/LyricRecord;updateCurrentLine(I)V"
-            )
-    )
-    private void splayerBridge$delayLyric(LyricRecord record, int tick) {
-        int offset = SPlayerBridge.config().lyricOffsetTicks;
-        record.updateCurrentLine(offset <= 0 ? tick : Math.max(0, tick - offset));
+    @Shadow
+    @Nullable
+    private URL songUrl;
+
+    @Inject(method = "tick()V", at = @At("HEAD"), cancellable = true)
+    private void splayerbridge$awaitAudio(CallbackInfo ci) {
+        URL url = this.songUrl;
+        if (url == null) {
+            return;
+        }
+        String session = Links.sessionOf(url.toString());
+        if (session != null && LyricGate.isPending(session)) {
+            // 音频还没开始：整次 tick 都跳过，歌词随之停住
+            ci.cancel();
+        }
     }
 }

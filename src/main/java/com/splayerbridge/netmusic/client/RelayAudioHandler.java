@@ -1,11 +1,8 @@
 package com.splayerbridge.netmusic.client;
 
-import com.github.tartaricacid.netmusic.api.NetEaseMusic;
 import com.github.tartaricacid.netmusic.client.api.IAudioStreamHandler;
-import com.github.tartaricacid.netmusic.client.audio.MusicBufferedInputStream;
-import com.github.tartaricacid.netmusic.util.Mp3Util;
 import com.splayerbridge.netmusic.SPlayerBridge;
-import com.splayerbridge.netmusic.net.ModPayloads;
+import com.splayerbridge.netmusic.net.Links;
 
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
@@ -15,115 +12,132 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.SequenceInputStream;
+import java.net.URI;
 import java.net.URL;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Set;
 
 /**
- * 处理本模组下发给客户端的地址，顺手修掉 NetMusic 播不了 FLAC 的问题。
+ * 处理本模组下发的标记地址。
  * <p>
- * 两类地址：
+ * 客户端只连服务端给的直链（默认直连网易云 CDN，不占用服务端任何端口），本类负责：
  * <ol>
- *     <li>服务端的假地址 <code>http://netmusic-splayer-bridge.invalid/audio/&lt;id&gt;.&lt;ext&gt;</code>，
- *         由服务端通过游戏端口下发数据</li>
- *     <li>其它非 mp3 直链：NetMusic 原版流式打开 {@code getAudioInputStream(InputStream)} 时，
- *         mp3spi 会先把整个流扫空，遇到 FLAC 就抛 {@code Resetting to invalid mark}。
- *         这里改成先落盘再用 {@code getAudioInputStream(File)}，按扩展名选 SPI，可以正常播放。</li>
+ *     <li>解开真实地址</li>
+ *     <li>非 mp3 格式（FLAC 等）先下到本地再用文件打开——NetMusic 流式打开会被
+ *         mp3spi 扫空整个流，直接抛 {@code Resetting to invalid mark}</li>
+ *     <li>登记 / 解除歌词门控，让歌词等音频真的开始才走</li>
  * </ol>
- * 网易云自己的域名（music.163.com）不接管，仍交给 NetMusic 的 NetEaseHttpHandler，免得丢掉请求头。
  */
 public final class RelayAudioHandler implements IAudioStreamHandler {
-    private static final String PREFIX = "/audio/";
-    /** 这些格式流式播放没问题，直接像 NetMusic 那样喂给 AudioSystem。 */
-    private static final Set<String> STREAMABLE = Set.of("mp3");
     /** 这些格式必须落盘，否则 mp3spi 会把流扫空。 */
     private static final Set<String> NEED_FILE = Set.of("flac", "m4a", "aac", "ogg", "wav", "ape", "wma");
-
+    /** 先预读这么多再交给 AudioSystem，让解码器立刻有数据可用。 */
     private static final int PREFILL_BYTES = 256 * 1024;
+    /** 解码器消费到这个量就认为「音频已经在放了」，可以解除歌词门控。 */
+    private static final int READY_BYTES = 200 * 1024;
 
     @Override
     public boolean canHandle(URL url) {
-        String host = url.getHost();
-        if (ModPayloads.FAKE_HOST.equalsIgnoreCase(host)) {
-            return true;
-        }
-        if (!SPlayerBridge.config().fixFlac) {
-            return false;
-        }
-        if (!"http".equalsIgnoreCase(url.getProtocol()) && !"https".equalsIgnoreCase(url.getProtocol())) {
-            return false;
-        }
-        if (host != null && host.contains(NetEaseMusic.getHost())) {
-            // 网易云自己的域名交给 NetMusic，免得丢登录态
-            return false;
-        }
-        return NEED_FILE.contains(LocalFileAudio.extension(url.getPath()));
+        return Links.unwrap(url.toString()) != null;
     }
 
     @Override
     public AudioInputStream handle(URL url) throws UnsupportedAudioFileException, IOException {
-        String extension = LocalFileAudio.extension(url.getPath());
-
-        if (ModPayloads.FAKE_HOST.equalsIgnoreCase(url.getHost())) {
-            long songId = parseSongId(url.getPath());
-            if (songId < 0) {
-                throw new IOException("无法解析音频地址: " + url);
-            }
-            SPlayerBridge.LOGGER.info("[SPlayerBridge] 拦截到音频地址: {}（走游戏端口，{}）", url, extension);
-
-            if (STREAMABLE.contains(extension) || extension.isEmpty()) {
-                return openStream(ClientTransport.open(songId), url);
-            }
-            // 非 mp3：服务端已经把 FLAC 转过码了，但以防万一，落盘后按文件打开
-            Path file = LocalFileAudio.write(ClientTransport.open(songId),
-                    System.currentTimeMillis() + "-" + songId + "." + extension);
-            return AudioSystem.getAudioInputStream(file.toFile());
+        String marker = url.toString();
+        String target = Links.unwrap(marker);
+        if (target == null) {
+            throw new IOException("无法解析音频地址: " + url);
         }
+        String session = marker.substring(marker.lastIndexOf('/') + 1, marker.indexOf('?'));
+        String extension = extensionOf(target);
+        LyricGate.begin(session);
+        SPlayerBridge.LOGGER.info("[SPlayerBridge] 开始播 {} 音频（会话 {}）", extension, session);
 
-        SPlayerBridge.LOGGER.info("[SPlayerBridge] {} 格式无法流式播放，先下载到本地再播", extension);
-        try (InputStream in = HttpAudio.open(url)) {
-            Path file = LocalFileAudio.write(in, System.currentTimeMillis() + "." + extension);
-            return AudioSystem.getAudioInputStream(file.toFile());
+        try {
+            if (NEED_FILE.contains(extension)) {
+                // 非 mp3：先下到本地再按文件打开，绕开 mp3spi 的流式探测 bug
+                Path file = LocalFileAudio.write(HttpAudio.open(new URL(target)),
+                        System.currentTimeMillis() + "-" + session + "." + extension);                // 本地文件读起来是毫秒级，等于立刻就绪
+                LyricGate.ready(session);
+                return AudioSystem.getAudioInputStream(file.toFile());
+            }
+
+            InputStream source = HttpAudio.open(new URL(target));
+            byte[] prefill = HttpAudio.readUpTo(source, PREFILL_BYTES);
+            InputStream combined = new SequenceInputStream(
+                    new ByteArrayInputStream(prefill), new CountingStream(source, session));
+            BufferedInputStream buffered = new BufferedInputStream(combined, 64 * 1024);
+            return AudioSystem.getAudioInputStream(buffered);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new IOException("下载音频被中断", e);
+            // 失败了也要解除门控，不然歌词会一直冻着
+            LyricGate.ready(session);
+            throw new IOException("获取音频被中断", e);
+        } catch (Exception e) {
+            // 失败了也要解除门控，不然歌词会一直冻着
+            LyricGate.ready(session);
+            throw e;
         }
-    }
-
-    /**
-     * 打开流式音频，并且先预读一段。
-     * <p>
-     * 为什么预读：音频是异步开始播放的，而客户端从拿到地址那一刻就在按 tick 计时。
-     * 如果不预读，音频真正出声前那几百毫秒会把歌词往前顶。预读 256KB（192kbps 下大约 10 秒）
-     * 之后，解码器拿到流就能立刻有数据可用。
-     */
-    private static AudioInputStream openStream(InputStream source, URL url)
-            throws UnsupportedAudioFileException, IOException {
-        byte[] prefill = HttpAudio.readUpTo(source, PREFILL_BYTES);
-        InputStream combined = new SequenceInputStream(
-                new ByteArrayInputStream(prefill), source);
-        BufferedInputStream buffered = new MusicBufferedInputStream(combined);
-        Mp3Util.skipID3(buffered);
-        return AudioSystem.getAudioInputStream(buffered);
     }
 
     @Override
     public int getPriority() {
-        // 比内置处理器都高，确保这些地址由我们处理
         return 1000;
     }
 
-    private static long parseSongId(String path) {
-        try {
-            String name = path.substring(PREFIX.length());
-            int dot = name.indexOf('.');
-            if (dot > 0) {
-                name = name.substring(0, dot);
+    /**
+     * 包装真实流，观察解码器真正消费了多少字节。
+     */
+    private static final class CountingStream extends InputStream {
+        private final InputStream delegate;
+        private final String session;
+        private long delivered;
+
+        private CountingStream(InputStream delegate, String session) {
+            this.delegate = delegate;
+            this.session = session;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int value = delegate.read();
+            if (value >= 0) {
+                count(1);
             }
-            return Long.parseLong(name);
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            int read = delegate.read(buffer, offset, length);
+            if (read > 0) {
+                count(read);
+            }
+            return read;
+        }
+
+        private void count(int bytes) {
+            delivered += bytes;
+            if (delivered >= READY_BYTES) {
+                LyricGate.ready(session);
+            }
+        }
+    }
+
+    private static String extensionOf(String url) {
+        try {
+            String path = new URI(url).getPath();
+            if (path == null) {
+                return "";
+            }
+            int dot = path.lastIndexOf('.');
+            if (dot < 0 || dot == path.length() - 1) {
+                return "";
+            }
+            return path.substring(dot + 1).toLowerCase(Locale.ROOT);
         } catch (Exception e) {
-            SPlayerBridge.LOGGER.warn("[SPlayerBridge] 无法解析音频地址: {}", path);
-            return -1L;
+            return "";
         }
     }
 }

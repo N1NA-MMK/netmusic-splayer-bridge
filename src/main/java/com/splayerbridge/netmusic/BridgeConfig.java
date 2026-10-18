@@ -33,17 +33,6 @@ public class BridgeConfig {
     public String splayerBaseUrl = "http://127.0.0.1:25884";
 
     /**
-     * 音频怎么下发给客户端：
-     * <ul>
-     *     <li><code>http</code>：服务端开一个本地 HTTP 服务（默认 25885），客户端直接连这个端口。客户端不需要装本模组。</li>
-     *     <li><code>packet</code>：通过游戏端口分包传输。客户端也要装本模组，适合 frp 反代 / 只映射了游戏端口的服务器。</li>
-     *     <li><code>direct</code>：不做中转，直接把解锁出来的直链交给客户端，让它自己去网易云 CDN 取。
-     *         最省事、不需要任何端口，代价是没有缓存加速，而且客户端要能访问网易云。</li>
-     * </ul>
-     */
-    public String transport = "http";
-
-    /**
      * 解锁接口候选列表，按顺序尝试，{id} 会被替换为网易云歌曲 ID。
      * <p>
      * 新版 SPlayer 的接口是 <code>/api/unblock/netease</code>；
@@ -71,76 +60,25 @@ public class BridgeConfig {
     /** 一首歌解析的总超时（秒），超过后放弃解锁、回退原地址。 */
     public int totalResolveTimeoutSeconds = 15;
 
-    /** 是否启用磁盘缓存。 */
-    public boolean cacheEnabled = true;
-
-    /** 缓存目录，相对路径基于游戏/服务端根目录。 */
-    public String cacheDir = "netmusic_splayer_cache";
-
-    /** 内置文件服务的端口，客户端会从这里拉取缓存音频。 */
-    public int cacheHttpPort = 25885;
-
-    /** 内置文件服务监听地址，默认监听全部网卡。 */
-    public String cacheBindAddress = "0.0.0.0";
+    /** 是否在日志里打印解锁结果。 */
+    public boolean logUnlocks = true;
 
     /**
-     * 下发给客户端的缓存地址中的主机名。
-     * <ul>
-     *     <li>auto：单人游戏用 127.0.0.1，专用服务端自动选择局域网 IP</li>
-     *     <li>也可手动填写，例如 192.168.1.10 或 example.com</li>
-     * </ul>
-     */
-    public String publicHost = "auto";
-
-    /** 同时下载缓存的最大数量。 */
-    public int maxConcurrentDownloads = 2;
-
-    /**
-     * 是否把音频转成 mp3 再下发给客户端（能显著减少 frp 流量）。
-     * <ul>
-     *     <li><code>auto</code>：找得到 ffmpeg 就转（默认）</li>
-     *     <li><code>off</code>：不转，原样下发</li>
-     *     <li><code>mp3</code>：强制转（找不到 ffmpeg 时回退到原始文件）</li>
-     * </ul>
-     */
-    public String transcode = "auto";
-
-    /** 转码码率（kbps）。192 对游戏内播放足够，想更省流量可以调 128。 */
-    public int transcodeBitrateKbps = 192;
-
-    /** ffmpeg 可执行文件路径，默认走 PATH。 */
-    public String ffmpegPath = "ffmpeg";
-
-    /**
-     * 修复 NetMusic 播放不了 FLAC 等格式的问题（仅客户端生效）。
+     * 非 mp3 格式（FLAC 等）是否先下载到本地再播放，仅客户端生效。
      * <p>
      * NetMusic 是流式打开音频的，mp3spi 会先把流扫空再找同步字，遇到 FLAC 直接抛
-     * {@code IOException: Resetting to invalid mark}。开启后本模组会先把这类音频下载到本地再用文件方式打开。
+     * {@code IOException: Resetting to invalid mark}。关闭这个选项可以让 FLAC 走流式播放，
+     * 但基本必然失败，只建议在排查问题时关掉。
      */
-    public boolean fixFlac = true;
+    public boolean downloadBeforePlay = true;
 
     /**
      * 歌词延后多少 tick 显示（20 tick = 1 秒），仅客户端生效。
      * <p>
-     * 歌词是按客户端 tick 计时的，而音频真正开始播放总会比「地址下发」晚一点，
-     * 于是歌词比音频快。默认 0；觉得歌词快就往上调，例如 10 代表延后 0.5 秒。
+     * 正常情况下不需要动：本模组会在客户端把歌词冻结到音频真正开始播放为止。
+     * 这个选项只是给「还差一点」的情况做微调，例如 10 代表再延后 0.5 秒。
      */
     public int lyricOffsetTicks = 0;
-
-    /**
-     * packet 模式下客户端的预读窗口（KB）。
-     * <p>
-     * 客户端是按播放速度消费的，所以这个窗口决定「能提前缓冲多少」：
-     * 1MB 只够撑十几秒，传输会跟着播放进度慢慢走；调大（例如 16384）可以一次把整首拉过去，
-     * 但需要带宽足够，否则会把游戏连接堵住。
-     */
-    public int packetWindowKb = 1024;
-
-    /** packet 模式每 tick 最多发几块（16KB/块）。4 块 ≈ 1.25MB/s。 */
-    public int packetChunksPerTick = 4;
-
-    /** 缓存命中时是否在日志里输出。 */
-    public boolean logCacheHits = true;
 
     public static Path configPath() {
         return FabricLoader.getInstance().getConfigDir().resolve(FILE_NAME);
@@ -181,48 +119,15 @@ public class BridgeConfig {
         while (splayerBaseUrl.endsWith("/")) {
             splayerBaseUrl = splayerBaseUrl.substring(0, splayerBaseUrl.length() - 1);
         }
-        if (transport == null || transport.isBlank()) {
-            transport = "http";
-        }
-        transport = transport.trim().toLowerCase(java.util.Locale.ROOT);
-        if (!"packet".equals(transport) && !"http".equals(transport) && !"direct".equals(transport)) {
-            transport = "http";
-        }
         if (unlockEndpoints == null || unlockEndpoints.isEmpty()) {
             unlockEndpoints = new ArrayList<>(List.of("/api/unblock/netease?id={id}"));
         }
         if (keywordEndpoints == null) {
             keywordEndpoints = new ArrayList<>();
         }
-        if (cacheDir == null || cacheDir.isBlank()) {
-            cacheDir = "netmusic_splayer_cache";
-        }
-        if (cacheHttpPort < 1024 || cacheHttpPort > 65535) {
-            cacheHttpPort = 25885;
-        }
-        if (cacheBindAddress == null || cacheBindAddress.isBlank()) {
-            cacheBindAddress = "0.0.0.0";
-        }
-        if (publicHost == null || publicHost.isBlank()) {
-            publicHost = "auto";
-        }
         requestTimeoutSeconds = Math.max(1, Math.min(requestTimeoutSeconds, 60));
         totalResolveTimeoutSeconds = Math.max(2, Math.min(totalResolveTimeoutSeconds, 120));
-        maxConcurrentDownloads = Math.max(1, Math.min(maxConcurrentDownloads, 8));
-        packetWindowKb = Math.max(256, Math.min(packetWindowKb, 65536));
-        packetChunksPerTick = Math.max(1, Math.min(packetChunksPerTick, 32));
         lyricOffsetTicks = Math.max(0, Math.min(lyricOffsetTicks, 200));
-        if (transcode == null || transcode.isBlank()) {
-            transcode = "auto";
-        }
-        transcode = transcode.trim().toLowerCase(java.util.Locale.ROOT);
-        if (!"auto".equals(transcode) && !"off".equals(transcode) && !"mp3".equals(transcode)) {
-            transcode = "auto";
-        }
-        transcodeBitrateKbps = Math.max(64, Math.min(transcodeBitrateKbps, 320));
-        if (ffmpegPath == null || ffmpegPath.isBlank()) {
-            ffmpegPath = "ffmpeg";
-        }
         return this;
     }
 

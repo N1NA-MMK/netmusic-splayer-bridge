@@ -3,7 +3,7 @@
   "id": "netmusic_splayer_bridge",
   "version": "${version}",
   "name": "Net Music: SPlayer Bridge",
-  "description": "为 NetMusic 提供 SPlayer 音源支持：播放 VIP 歌曲时优先从服务端 SPlayer 的解锁接口获取音频，并自动缓存到本地，下次直接播放缓存。",
+  "description": "为 NetMusic 提供 SPlayer 音源支持：播放 VIP 歌曲时由服务端向 SPlayer 取解锁直链，客户端自行从 CDN 播放，并修正 FLAC 播放与歌词同步。",
   "authors": [
     "SPlayerBridge"
   ],

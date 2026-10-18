@@ -2,10 +2,9 @@ package com.splayerbridge.netmusic;
 
 import com.github.tartaricacid.netmusic.api.resolver.IAsyncSongUrlResolver;
 import com.github.tartaricacid.netmusic.item.ItemMusicCD;
-import com.splayerbridge.netmusic.cache.AudioCache;
+import com.splayerbridge.netmusic.net.Links;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -13,12 +12,11 @@ import java.util.concurrent.CompletableFuture;
  * <p>
  * 流程：
  * <ol>
- *     <li>命中本地缓存 → 直接把服务端缓存地址交给客户端（秒开）</li>
- *     <li>没有缓存 → 请求 SPlayer 解锁拿到直链，服务端开始下载，同时把
- *         <b>服务端自己的地址</b>交给客户端；客户端连上来后读不到数据会等待，
- *         服务端下到哪就发到哪（边下边播），全程客户端不直连网易云</li>
+ *     <li>请求 SPlayer 解锁，拿到 CDN 直链</li>
+ *     <li>把直链包成标记地址交给客户端（客户端必装本模组，才能正确处理歌词和 FLAC）</li>
  *     <li>SPlayer 不可用 → 原样返回，交给 NetMusic 原本的逻辑处理</li>
  * </ol>
+ * 服务端不转发音频、不占额外端口，音频由客户端自己从 CDN 取。
  */
 public final class SPlayerSongResolver implements IAsyncSongUrlResolver {
 
@@ -41,57 +39,21 @@ public final class SPlayerSongResolver implements IAsyncSongUrlResolver {
             return CompletableFuture.completedFuture(songInfo);
         }
 
-        BridgeConfig config = SPlayerBridge.config();
-        boolean direct = AudioCache.isDirectTransport();
-
-        // direct 模式下不读缓存：客户端直接去 CDN 取，缓存在服务端也没法给它
-        Optional<String> cachedName = direct ? Optional.empty() : AudioCache.fileName(songId);
-        if (cachedName.isPresent()) {
-            Optional<String> url = AudioCache.urlFor(songId, cachedName.get());
-            if (url.isPresent()) {
-                songInfo.songUrl = url.get();
-                if (config.logCacheHits) {
-                    SPlayerBridge.LOGGER.info("[SPlayerBridge] 缓存命中: {} (id={})", songInfo.songName, songId);
-                }
-                return CompletableFuture.completedFuture(songInfo);
-            }
-        }
-
         List<String> artists = songInfo.artists;
         String artist = (artists == null || artists.isEmpty()) ? "" : artists.get(0);
 
-        return SPlayerApi.unlock(songId, songInfo.songName, artist).thenCompose(result -> {
-            if (result.isEmpty()) {
+        return SPlayerApi.unlock(songId, songInfo.songName, artist).thenApply(result -> {
+            if (result.isPresent()) {
+                // 包一层标记地址：客户端才知道这是本模组给的链接，
+                // 才会做「非 mp3 先下载再播放」和「等音频就绪再走歌词」
+                songInfo.songUrl = Links.wrap(result.get());
+                SPlayerBridge.LOGGER.info("[SPlayerBridge] 已解锁并交由客户端直连: {} (id={})",
+                        songInfo.songName, songId);
+            } else {
                 SPlayerBridge.LOGGER.warn("[SPlayerBridge] 解锁失败，回退原始地址: {} (id={})",
                         songInfo.songName, songId);
-                return CompletableFuture.completedFuture(songInfo);
             }
-            String audioUrl = result.get();
-            Optional<String> started = AudioCache.ensure(songId, audioUrl);
-            if (started.isEmpty()) {
-                songInfo.songUrl = audioUrl;
-                SPlayerBridge.LOGGER.warn("[SPlayerBridge] 服务端下发不可用，客户端将直连: {} (id={})",
-                        songInfo.songName, songId);
-                return CompletableFuture.completedFuture(songInfo);
-            }
-
-            // 必须等音频就绪再把地址给客户端：客户端收到地址就开始按 tick 计时，
-            // 歌词是按这个计时显示的，早发 10 秒歌词就会整体超前 10 秒。
-            return AudioCache.awaitReady(songId).thenApply(ready -> {
-                if (ready.isPresent()) {
-                    Optional<String> url = AudioCache.urlFor(songId, ready.get());
-                    if (url.isPresent()) {
-                        songInfo.songUrl = url.get();
-                        SPlayerBridge.LOGGER.info("[SPlayerBridge] 已解锁，服务端音频就绪并转发: {} (id={}, {})",
-                                songInfo.songName, songId, AudioCache.isPacketTransport() ? "游戏端口" : "HTTP");
-                        return songInfo;
-                    }
-                }
-                songInfo.songUrl = audioUrl;
-                SPlayerBridge.LOGGER.warn("[SPlayerBridge] 服务端音频未就绪，客户端将直连: {} (id={})",
-                        songInfo.songName, songId);
-                return songInfo;
-            });
+            return songInfo;
         });
     }
 

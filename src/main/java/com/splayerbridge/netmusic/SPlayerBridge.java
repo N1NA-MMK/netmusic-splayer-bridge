@@ -1,22 +1,23 @@
 package com.splayerbridge.netmusic;
 
 import com.github.tartaricacid.netmusic.api.resolver.MusicPlayResolverManager;
-import com.splayerbridge.netmusic.cache.AudioCacheService;
 import com.splayerbridge.netmusic.command.BridgeCommand;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 /**
  * NetMusic x SPlayer 桥接模组。
  * <p>
- * 作用：当 NetMusic 播放网易云 VIP 歌曲时，优先向本机（服务端）运行的 SPlayer
- * 的解锁接口请求音频直链；首次播放会把音频缓存到服务端磁盘，之后同一首歌直接走缓存。
+ * 作用：当 NetMusic 播放网易云 VIP 歌曲时，由服务端向本机运行的 SPlayer 请求解锁后的
+ * CDN 直链，并把客户端自己能访问的地址交给它。
  * <p>
  * 实现方式：注册一个优先级最高的 {@link com.github.tartaricacid.netmusic.api.resolver.IAsyncSongUrlResolver}，
  * 由服务端在把歌曲信息下发给客户端之前完成 URL 替换。
+ * <p>
+ * 音频不走服务端转发：客户端装上本模组后，会直接去 CDN 取音频，
+ * 因此不占用服务端的额外端口，也不需要 frp 之类做端口映射。
  */
 public class SPlayerBridge implements ModInitializer {
     public static final String MOD_ID = "netmusic_splayer_bridge";
@@ -35,21 +36,14 @@ public class SPlayerBridge implements ModInitializer {
     public void onInitialize() {
         config = BridgeConfig.load();
 
-        // 网络包两侧都要注册
-        com.splayerbridge.netmusic.net.ModPayloads.register();
-        com.splayerbridge.netmusic.net.PacketTransportServer.init();
-
         // 必须在 NetMusic 冻结解析器列表（AllModLoadedEvent）之前注册
         MusicPlayResolverManager.registerResolver(new SPlayerSongResolver());
-
-        ServerLifecycleEvents.SERVER_STARTED.register(server -> AudioCacheService.start());
-        ServerLifecycleEvents.SERVER_STOPPED.register(server -> AudioCacheService.stop());
 
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
                 dispatcher.register(BridgeCommand.build()));
 
-        LOGGER.info("[SPlayerBridge] 已加载，SPlayer 地址: {}，下发方式: {}，缓存: {}",
-                config.splayerBaseUrl, config.transport, config.cacheEnabled ? config.cacheDir : "已关闭");
+        LOGGER.info("[SPlayerBridge] 已加载，SPlayer 地址: {}，全部歌曲: {}",
+                config.splayerBaseUrl, config.preferForAllNeteaseSongs ? "是" : "否（仅 VIP）");
     }
 
     /**
@@ -57,7 +51,6 @@ public class SPlayerBridge implements ModInitializer {
      */
     public static void reload() {
         config = BridgeConfig.load();
-        AudioCacheService.restart();
         LOGGER.info("[SPlayerBridge] 配置已重新加载");
     }
 }
