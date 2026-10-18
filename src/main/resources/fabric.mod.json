@@ -9,6 +9,12 @@
   ],
   "license": "MIT",
   "environment": "*",
+  "mixins": [
+    {
+      "config": "splayerbridge.mixins.json",
+      "environment": "client"
+    }
+  ],
   "entrypoints": {
     "main": [
       "com.splayerbridge.netmusic.SPlayerBridge"

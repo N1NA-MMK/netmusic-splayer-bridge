@@ -120,6 +120,14 @@ public class BridgeConfig {
     public boolean fixFlac = true;
 
     /**
+     * 歌词延后多少 tick 显示（20 tick = 1 秒），仅客户端生效。
+     * <p>
+     * 歌词是按客户端 tick 计时的，而音频真正开始播放总会比「地址下发」晚一点，
+     * 于是歌词比音频快。默认 0；觉得歌词快就往上调，例如 10 代表延后 0.5 秒。
+     */
+    public int lyricOffsetTicks = 0;
+
+    /**
      * packet 模式下客户端的预读窗口（KB）。
      * <p>
      * 客户端是按播放速度消费的，所以这个窗口决定「能提前缓冲多少」：
@@ -203,6 +211,7 @@ public class BridgeConfig {
         maxConcurrentDownloads = Math.max(1, Math.min(maxConcurrentDownloads, 8));
         packetWindowKb = Math.max(256, Math.min(packetWindowKb, 65536));
         packetChunksPerTick = Math.max(1, Math.min(packetChunksPerTick, 32));
+        lyricOffsetTicks = Math.max(0, Math.min(lyricOffsetTicks, 200));
         if (transcode == null || transcode.isBlank()) {
             transcode = "auto";
         }

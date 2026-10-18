@@ -4,7 +4,6 @@ import com.github.tartaricacid.netmusic.api.NetEaseMusic;
 import com.github.tartaricacid.netmusic.client.api.IAudioStreamHandler;
 import com.github.tartaricacid.netmusic.client.audio.MusicBufferedInputStream;
 import com.github.tartaricacid.netmusic.util.Mp3Util;
-import com.google.common.net.HttpHeaders;
 import com.splayerbridge.netmusic.SPlayerBridge;
 import com.splayerbridge.netmusic.net.ModPayloads;
 
@@ -12,13 +11,11 @@ import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.UnsupportedAudioFileException;
 import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
+import java.io.SequenceInputStream;
 import java.net.URL;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.util.Set;
 
@@ -42,7 +39,7 @@ public final class RelayAudioHandler implements IAudioStreamHandler {
     /** 这些格式必须落盘，否则 mp3spi 会把流扫空。 */
     private static final Set<String> NEED_FILE = Set.of("flac", "m4a", "aac", "ogg", "wav", "ape", "wma");
 
-    private static final HttpClient HTTP = HttpClient.newHttpClient();
+    private static final int PREFILL_BYTES = 256 * 1024;
 
     @Override
     public boolean canHandle(URL url) {
@@ -75,9 +72,7 @@ public final class RelayAudioHandler implements IAudioStreamHandler {
             SPlayerBridge.LOGGER.info("[SPlayerBridge] 拦截到音频地址: {}（走游戏端口，{}）", url, extension);
 
             if (STREAMABLE.contains(extension) || extension.isEmpty()) {
-                BufferedInputStream buffered = new MusicBufferedInputStream(ClientTransport.open(songId));
-                Mp3Util.skipID3(buffered);
-                return AudioSystem.getAudioInputStream(buffered);
+                return openStream(ClientTransport.open(songId), url);
             }
             // 非 mp3：服务端已经把 FLAC 转过码了，但以防万一，落盘后按文件打开
             Path file = LocalFileAudio.write(ClientTransport.open(songId),
@@ -86,17 +81,30 @@ public final class RelayAudioHandler implements IAudioStreamHandler {
         }
 
         SPlayerBridge.LOGGER.info("[SPlayerBridge] {} 格式无法流式播放，先下载到本地再播", extension);
-        HttpRequest request = HttpRequest.newBuilder(URI.create(url.toString()))
-                .header(HttpHeaders.USER_AGENT, NetEaseMusic.getUserAgent())
-                .GET()
-                .build();
-        try (InputStream in = HTTP.send(request, HttpResponse.BodyHandlers.ofInputStream()).body()) {
+        try (InputStream in = HttpAudio.open(url)) {
             Path file = LocalFileAudio.write(in, System.currentTimeMillis() + "." + extension);
             return AudioSystem.getAudioInputStream(file.toFile());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("下载音频被中断", e);
         }
+    }
+
+    /**
+     * 打开流式音频，并且先预读一段。
+     * <p>
+     * 为什么预读：音频是异步开始播放的，而客户端从拿到地址那一刻就在按 tick 计时。
+     * 如果不预读，音频真正出声前那几百毫秒会把歌词往前顶。预读 256KB（192kbps 下大约 10 秒）
+     * 之后，解码器拿到流就能立刻有数据可用。
+     */
+    private static AudioInputStream openStream(InputStream source, URL url)
+            throws UnsupportedAudioFileException, IOException {
+        byte[] prefill = HttpAudio.readUpTo(source, PREFILL_BYTES);
+        InputStream combined = new SequenceInputStream(
+                new ByteArrayInputStream(prefill), source);
+        BufferedInputStream buffered = new MusicBufferedInputStream(combined);
+        Mp3Util.skipID3(buffered);
+        return AudioSystem.getAudioInputStream(buffered);
     }
 
     @Override

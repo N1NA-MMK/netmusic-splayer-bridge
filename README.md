@@ -40,8 +40,11 @@
 - **NetMusic 播不了 FLAC**：原版是用 `AudioSystem.getAudioInputStream(InputStream)` 流式打开的，mp3spi 试探时会把整个流扫空再 `reset()`，
   遇到 FLAC 必抛 `Resetting to invalid mark`。所以只要开了转码，服务端**一定先把 FLAC 转成 mp3 才会把地址交给客户端**；
   已经缓存的老文件用 `/splayerbridge cache transcode` 批量转换。
-- **歌词同步**：NetMusic 的歌词按客户端 tick 计时，服务端会等「下载 + 转码」都就绪后才发地址，
-  否则歌词会整体超前那段等待时间。首播等待 20MB 的歌约 10 秒，之后秒开。
+- **歌词同步**：NetMusic 的歌词按客户端 tick 计时，而音频是异步开始播放的，所以总会有几十到几百毫秒的超前。
+  三件事一起把误差压到最小：
+  1. 服务端等「下载 + 转码」就绪后才发地址，不发半成品；
+  2. 客户端拿到流后先预读 256KB 再交给 AudioSystem，音频立刻有数据可用；
+  3. 还嫌快就把 `lyricOffsetTicks` 调大（20 tick = 1 秒），它会把歌词整体往后推。
 - **客户端兜底**：客户端装了这个模组时，遇到 `.flac / .m4a / .aac / .ogg` 这类直链会先下载到本地再用文件方式打开，
   这样 NetMusic 自己解析出来的 FLAC（非 VIP 歌曲也可能命中）也能正常播。不需要这个行为可以把 `fixFlac` 设为 `false`。
   （这条路是先下完整首再播，所以歌词会超前「下载耗时」，大约是几秒。）
@@ -89,6 +92,7 @@
 | `transcodeBitrateKbps` | `192` | 转码码率，想更省流量可以调 `128` |
 | `ffmpegPath` | `ffmpeg` | ffmpeg 路径，默认走 PATH |
 | `fixFlac` | `true` | 客户端：遇到非 mp3 直链时先下载到本地再播放（绕开 NetMusic 的 FLAC 流式 bug） |
+| `lyricOffsetTicks` | `0` | 歌词延后多少 tick（20 tick = 1 秒）。觉得歌词比音频快就往上调，10 = 延后 0.5 秒 |
 | `packetWindowKb` | `1024` | packet 模式预读窗口。客户端按播放速度消费，窗口决定能提前缓冲多少；调大（如 `32768`）可一次把整首拉过去，但更吃带宽和内存 |
 | `packetChunksPerTick` | `4` | packet 模式每 tick 最多发几块（16KB/块）。4 ≈ 1.25MB/s，网络差就调小 |
 | `logCacheHits` | `true` | 是否记录缓存命中日志 |
