@@ -48,10 +48,21 @@
 
 ## 安装
 
-1. 把 `netmusic-splayer-bridge-1.1.0.jar` 丢进 `mods/`
+1. 把 `netmusic-splayer-bridge-1.2.3.jar` 丢进 `mods/`
 2. 确保 NetMusic 1.5.x（Fabric 26.1.2 版）也在 `mods/` 里
 3. 启动一次 SPlayer（保持运行），确认 `http://127.0.0.1:25884/api` 能返回 JSON
 4. 启动游戏 / 服务端，配置会自动生成在 `config/netmusic-splayer-bridge.json`
+
+### 装哪一端
+
+| 场景 | 服务端 | 客户端 |
+| --- | --- | --- |
+| `transport=http`（默认） | 必须 | 不需要，NetMusic 自己能播服务端给的 MP3 |
+| `transport=packet` | 必须 | **必须**（音频走游戏端口下发） |
+| `transport=direct` | 必须 | 不需要；FLAC 直链只有装了才兜得住 |
+| 单人游戏 | 一份就够 | — |
+
+客户端装了但对端没有服务端时不生效，不会碍事。
 
 ## 配置
 
