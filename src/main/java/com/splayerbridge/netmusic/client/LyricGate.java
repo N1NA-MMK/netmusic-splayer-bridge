@@ -18,8 +18,12 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class LyricGate {
     /** 待就绪的会话：会话号 -> 登记时间。 */
     private static final Map<String, Long> PENDING = new ConcurrentHashMap<>();
-    /** 兜底：超过这么久还没就绪也放行，避免数据永远不来把留声机卡死。 */
-    private static final long MAX_WAIT_MILLIS = 8_000L;
+    /**
+     * 兜底：超过这么久还没就绪也放行。
+     * <p>
+     * 要足够长，因为非 mp3 格式是先下完整首才开播的（一首 FLAC 二十几 MB，慢网可能要几十秒）。
+     */
+    private static final long MAX_WAIT_MILLIS = 120_000L;
 
     private LyricGate() {
     }

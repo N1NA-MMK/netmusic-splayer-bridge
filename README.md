@@ -34,14 +34,20 @@ NetMusic 是用 `AudioSystem.getAudioInputStream(InputStream)` **流式**打开�
 只有按扩展名选 SPI（走 File）才能打开。
 
 所以客户端遇到 FLAC 会先下到本地，再用 `getAudioInputStream(File)` 播放。
+下载按歌曲 ID 缓存到 `.minecraft/splayer_bridge_audio/<歌曲ID>.<扩展名>`，同一首歌第二次播放直接读本地，不再下载。
 
 ### 2. 为什么歌词能对齐音频
 
 MC 的 `SoundEngine.play()` 对流式声音是这么干的：**先把声音实例加进 tick 表（歌词开始计时），同时异步去拉音频流**。
 所以音频还没出声，歌词已经走了——这是 NetMusic + MC 的既有行为，所有歌曲都有，不是本模组引入的。
 
-本模组用客户端 mixin 在音频真正就绪前冻结 tick：客户端解码器消费到约 200KB 数据（音频已经开播）时才解除冻结。
+本模组用客户端 mixin 在音频真正开播前冻结 tick。放行时机不是拍脑袋的固定值，而是
+「解码器已经消费掉约 4 秒音频」——这个量正好对应 `NetMusicAudioStream` 构造时 `pumpBuffers(4)` 的预读，
+所以歌词和音频的误差在几十毫秒级。阈值按 `AudioFormat` 计算（192kbps 的 mp3 4 秒约 100KB，
+44.1kHz 立体声 PCM 4 秒约 705KB，差 7 倍，写死字节数必然错）。
+
 每次播放的会话号都不同，所以多台留声机同时播放也不会互相干扰。
+解除门控时客户端会打印 `歌词门控解除（会话 N，等待 X ms，已消费 Y KB）`，对不上时看这行就知道差多少。
 
 ## 安装
 
@@ -76,6 +82,15 @@ MC 的 `SoundEngine.play()` 对流式声音是这么干的：**先把声音实�
 /splayerbridge status   查看开关、SPlayer 在线状态
 /splayerbridge reload   重新读取配置
 ```
+
+## 客户端缓存
+
+非 mp3 格式（FLAC 等）会被下载到 `<游戏目录>/splayer_bridge_audio/<歌曲ID>.<扩展名>`：
+
+- 同一首歌只下一次，之后直接读本地，秒开
+- 总大小上限 **2GB**，超出后按最久未使用自动淘汰（日志会说明）
+- 想手动清空，直接删这个目录即可
+- 首次启动会清掉旧版本留下的「时间戳-会话」命名文件
 
 ## 已知限制
 

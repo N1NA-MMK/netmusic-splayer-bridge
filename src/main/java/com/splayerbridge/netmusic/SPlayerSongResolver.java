@@ -46,7 +46,7 @@ public final class SPlayerSongResolver implements IAsyncSongUrlResolver {
             if (result.isPresent()) {
                 // 包一层标记地址：客户端才知道这是本模组给的链接，
                 // 才会做「非 mp3 先下载再播放」和「等音频就绪再走歌词」
-                songInfo.songUrl = Links.wrap(result.get());
+                songInfo.songUrl = Links.wrap(result.get(), songId);
                 SPlayerBridge.LOGGER.info("[SPlayerBridge] 已解锁并交由客户端直连: {} (id={})",
                         songInfo.songName, songId);
             } else {

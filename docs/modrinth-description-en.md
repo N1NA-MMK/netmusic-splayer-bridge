@@ -24,13 +24,13 @@ Install it on **both** sides. The server does the unlocking; the client does the
 
 Stock Net Music opens audio as a **stream** (`AudioSystem.getAudioInputStream(InputStream)`). The mp3spi probe scans the whole stream looking for a frame sync before giving up, so every FLAC track dies with `IOException: Resetting to invalid mark`. This is not a buffer-size problem — 8KB, 1MB and 32MB buffers all fail; only opening by file extension works.
 
-This mod therefore downloads non-mp3 tracks to disk on the client and opens them as a file. FLAC and friends play normally.
+This mod therefore downloads non-mp3 tracks to disk on the client and opens them as a file. FLAC and friends play normally. Downloads are cached per song id, so a song is fetched once and then played straight from disk.
 
 ### Lyrics starting too early
 
 `SoundEngine.play()` adds a streaming sound to the tick list **at the same moment** it kicks off the async audio load. Lyrics are driven by that tick counter, so they always run ahead of the audio by however long loading takes — a stock Net Music quirk, visible on every song.
 
-With this mod installed, a client-side mixin freezes the tick until the decoder has actually consumed enough audio to be playing. The freeze releases per playback (each play gets its own session id), so multiple jukeboxes don't interfere.
+With this mod installed, a client-side mixin freezes the tick until the decoder has consumed about four seconds of audio — exactly the amount `NetMusicAudioStream` primes before it starts. The threshold is derived from the `AudioFormat` rather than a fixed byte count (192kbps MP3 needs ~100KB for four seconds, 44.1kHz stereo PCM needs ~705KB — a factor of seven, so any constant is wrong). Each play has its own session id, so multiple jukeboxes don't interfere, and the release is logged with the elapsed time if you ever need to tune it.
 
 ---
 
