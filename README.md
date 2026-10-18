@@ -39,9 +39,12 @@
 - 缓存文件在下载过程中带一个 `<id>.<ext>.part` 标记，下完才删；中途退出游戏不会留下半首歌被当成完整缓存。
 - **NetMusic 播不了 FLAC**：原版是用 `AudioSystem.getAudioInputStream(InputStream)` 流式打开的，mp3spi 试探时会把整个流扫空再 `reset()`，
   遇到 FLAC 必抛 `Resetting to invalid mark`。所以只要开了转码，服务端**一定先把 FLAC 转成 mp3 才会把地址交给客户端**；
-  首次播放也因此要等下载 + 转码完成（20MB 左右的歌大约 10 秒），之后就是秒开。已经缓存的老文件用 `/splayerbridge cache transcode` 批量转换。
+  已经缓存的老文件用 `/splayerbridge cache transcode` 批量转换。
+- **歌词同步**：NetMusic 的歌词按客户端 tick 计时，服务端会等「下载 + 转码」都就绪后才发地址，
+  否则歌词会整体超前那段等待时间。首播等待 20MB 的歌约 10 秒，之后秒开。
 - **客户端兜底**：客户端装了这个模组时，遇到 `.flac / .m4a / .aac / .ogg` 这类直链会先下载到本地再用文件方式打开，
   这样 NetMusic 自己解析出来的 FLAC（非 VIP 歌曲也可能命中）也能正常播。不需要这个行为可以把 `fixFlac` 设为 `false`。
+  （这条路是先下完整首再播，所以歌词会超前「下载耗时」，大约是几秒。）
 
 ## 安装
 

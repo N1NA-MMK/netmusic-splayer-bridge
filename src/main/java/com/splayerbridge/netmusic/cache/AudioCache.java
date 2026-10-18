@@ -64,7 +64,72 @@ public final class AudioCache {
     /** ffmpeg 探测结果，null = 还没探测过。 */
     private static volatile Boolean ffmpegOk;
 
+    /** 等音频就绪的超时时间。 */
+    private static final long READY_TIMEOUT_MILLIS = 90_000L;
+
+    /** 等着「音频就绪」的请求，key 是歌曲 ID。 */
+    private static final Map<Long, Waiter> WAITERS = new ConcurrentHashMap<>();
+    private static ScheduledFuture<?> waiterTask;
+
     private AudioCache() {
+    }
+
+    private static final class Waiter {
+        private final long deadline = System.currentTimeMillis() + READY_TIMEOUT_MILLIS;
+        private final CompletableFuture<Optional<String>> future = new CompletableFuture<>();
+
+        private void complete(String fileName) {
+            future.complete(Optional.ofNullable(fileName));
+        }
+    }
+
+    /**
+     * 等到这首歌的音频真正就绪（下载 + 转码都完成），返回最终文件名。
+     * <p>
+     * 为什么需要等：客户端收到地址的那一刻就开始按 tick 计时了，而歌词是按这个计时显示的。
+     * 如果音频还要 10 秒才备好，歌词就会整体超前 10 秒。
+     *
+     * @return 就绪时返回文件名；失败或超时返回 empty，调用方应回退到远端直链
+     */
+    public static CompletableFuture<Optional<String>> awaitReady(long songId) {
+        Optional<Path> done = findComplete(songId);
+        if (done.isPresent()) {
+            return CompletableFuture.completedFuture(Optional.of(done.get().getFileName().toString()));
+        }
+        Waiter waiter = WAITERS.computeIfAbsent(songId, id -> {
+            Waiter created = new Waiter();
+            created.future.whenComplete((unused, throwable) -> WAITERS.remove(id, created));
+            ensurePoller();
+            return created;
+        });
+        return waiter.future;
+    }
+
+    private static synchronized void ensurePoller() {
+        if (waiterTask == null || waiterTask.isDone()) {
+            waiterTask = Async.tick().scheduleAtFixedRate(
+                    AudioCache::pollWaiters, 0, 200, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private static void pollWaiters() {
+        long now = System.currentTimeMillis();
+        for (Map.Entry<Long, Waiter> entry : WAITERS.entrySet()) {
+            long songId = entry.getKey();
+            Waiter waiter = entry.getValue();
+            Optional<Path> done = findComplete(songId);
+            if (done.isPresent()) {
+                waiter.complete(done.get().getFileName().toString());
+                continue;
+            }
+            Optional<Download> active = activeDownload(songId);
+            if (active.isEmpty()) {
+                // 下载既不在了也没进索引，说明失败或被清理了
+                waiter.complete(null);
+            } else if (active.get().isFailed() || now > waiter.deadline) {
+                waiter.complete(null);
+            }
+        }
     }
 
     /**

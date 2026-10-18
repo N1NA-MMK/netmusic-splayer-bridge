@@ -60,34 +60,38 @@ public final class SPlayerSongResolver implements IAsyncSongUrlResolver {
         List<String> artists = songInfo.artists;
         String artist = (artists == null || artists.isEmpty()) ? "" : artists.get(0);
 
-        return SPlayerApi.unlock(songId, songInfo.songName, artist).thenApply(result -> {
-            if (result.isPresent()) {
-                String audioUrl = result.get();
-                if (direct) {
-                    // 客户端自己连网易云 CDN，服务端不参与传输
-                    songInfo.songUrl = audioUrl;
-                    SPlayerBridge.LOGGER.info("[SPlayerBridge] 已解锁，客户端直连: {} (id={})",
-                            songInfo.songName, songId);
-                    return songInfo;
-                }
-                Optional<String> url = AudioCache.ensure(songId, audioUrl)
-                        .flatMap(name -> AudioCache.urlFor(songId, name));
-                if (url.isPresent()) {
-                    // 交给客户端的是服务端地址：客户端来取数据时服务端边下边发
-                    songInfo.songUrl = url.get();
-                    SPlayerBridge.LOGGER.info("[SPlayerBridge] 已解锁并由服务端转发: {} (id={}, {})",
-                            songInfo.songName, songId, AudioCache.isPacketTransport() ? "游戏端口" : "HTTP");
-                } else {
-                    // 缓存/下发不可用时退回直链，至少还能播
-                    songInfo.songUrl = audioUrl;
-                    SPlayerBridge.LOGGER.warn("[SPlayerBridge] 服务端下发不可用，客户端将直连: {} (id={})",
-                            songInfo.songName, songId);
-                }
-            } else {
+        return SPlayerApi.unlock(songId, songInfo.songName, artist).thenCompose(result -> {
+            if (result.isEmpty()) {
                 SPlayerBridge.LOGGER.warn("[SPlayerBridge] 解锁失败，回退原始地址: {} (id={})",
                         songInfo.songName, songId);
+                return CompletableFuture.completedFuture(songInfo);
             }
-            return songInfo;
+            String audioUrl = result.get();
+            Optional<String> started = AudioCache.ensure(songId, audioUrl);
+            if (started.isEmpty()) {
+                songInfo.songUrl = audioUrl;
+                SPlayerBridge.LOGGER.warn("[SPlayerBridge] 服务端下发不可用，客户端将直连: {} (id={})",
+                        songInfo.songName, songId);
+                return CompletableFuture.completedFuture(songInfo);
+            }
+
+            // 必须等音频就绪再把地址给客户端：客户端收到地址就开始按 tick 计时，
+            // 歌词是按这个计时显示的，早发 10 秒歌词就会整体超前 10 秒。
+            return AudioCache.awaitReady(songId).thenApply(ready -> {
+                if (ready.isPresent()) {
+                    Optional<String> url = AudioCache.urlFor(songId, ready.get());
+                    if (url.isPresent()) {
+                        songInfo.songUrl = url.get();
+                        SPlayerBridge.LOGGER.info("[SPlayerBridge] 已解锁，服务端音频就绪并转发: {} (id={}, {})",
+                                songInfo.songName, songId, AudioCache.isPacketTransport() ? "游戏端口" : "HTTP");
+                        return songInfo;
+                    }
+                }
+                songInfo.songUrl = audioUrl;
+                SPlayerBridge.LOGGER.warn("[SPlayerBridge] 服务端音频未就绪，客户端将直连: {} (id={})",
+                        songInfo.songName, songId);
+                return songInfo;
+            });
         });
     }
 
