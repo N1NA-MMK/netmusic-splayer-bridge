@@ -27,7 +27,7 @@ public abstract class NetMusicSoundMixin {
     @Nullable
     private URL songUrl;
 
-    @Inject(method = "tick()V", at = @At("HEAD"), cancellable = true)
+    @Inject(method = MixinNames.SOUND_TICK + "()V", at = @At("HEAD"), cancellable = true)
     private void splayerbridge$awaitAudio(CallbackInfo ci) {
         URL url = this.songUrl;
         if (url == null) {

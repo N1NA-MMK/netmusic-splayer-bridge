@@ -2,11 +2,53 @@ plugins {
     id 'net.fabricmc.fabric-loom' version '1.16-SNAPSHOT'
 }
 
+// ============================================================
+// 多版本构建
+//
+// 同一个源码树编译到多个 MC 版本，版本参数放在 versions/<MC版本>.properties，
+// 用 -Pactive_mc_version=1.21.1 切换（默认值见 gradle.properties）。
+//
+//   ./gradlew build                                # 构建默认版本（26.1.2）
+//   ./gradlew build -Pactive_mc_version=1.21.1      # 构建其它版本
+//   ./gradlew runServer -Pactive_mc_version=1.20.1  # 跑测试服务端
+//
+// 各版本真正的源码差异只有一处：NetMusic 的映射不同（26.1.2 是 Mojang 官方名，
+// 1.21.1/1.20.1 是 Yarn 中转名），导致 NetMusicSound#tick 的方法名不同
+// （tick vs method_16896）——由 generateMixinNames 按版本生成 MixinNames.java。
+// ============================================================
+
+def activeMcVersion = (project.findProperty('active_mc_version') ?: '26.1.2').toString()
+def versionFile = rootProject.file("versions/${activeMcVersion}.properties")
+if (!versionFile.exists()) {
+    throw new GradleException("找不到版本配置文件 versions/${activeMcVersion}.properties，" +
+            "可用版本见 versions/ 目录。当前 active_mc_version=${activeMcVersion}")
+}
+
+def versionProps = new Properties()
+versionFile.withInputStream { stream -> versionProps.load(new InputStreamReader(stream, 'UTF-8')) }
+versionProps.each { key, value -> project.ext.set(key.toString(), value.toString()) }
+
+if (versionProps.getProperty('toolchain', 'modern') == 'legacy') {
+    // 老版本（1.21.1 / 1.20.1）需要整套旧工具链：Loom 1.7-1.13 + Gradle 8.x + Yarn 映射。
+    // 现代 Loom（1.14 起）已经移除了 mappings 配置、强制使用官方映射，
+    // 无法解析 1.21.1/1.20.1 的 fabric-api（其中 21 个模块带的 .accesswidener
+    // 是 intermediary 命名空间，包括我们要用的 fabric-command-api-v2）。
+    // 等工具链方案落地后，把这里换成对应的构建配置即可。
+    throw new GradleException("""
+        MC ${activeMcVersion} 需要旧工具链（Loom ≤1.13 + Gradle 8 + Yarn 映射），
+        当前构建脚本用的 Loom 1.16 系列只能编译 MC 26.1 及以后的官方映射版本。
+
+        源码侧已经就绪：NetMusic 在该版本的 API 与 26.1.2 完全一致，
+        只差 mixin 方法名（${sound_tick_method}），MixinNames 会按版本自动生成。
+        缺的是构建工具链，需要为该版本单独配置 Loom + Gradle 组合。
+        """.stripIndent())
+}
+
 version = project.mod_version
 group = project.maven_group
 
 base {
-    archivesName = project.archives_base_name
+    archivesName = "netmusic-splayer-bridge-mc${minecraft_version}"
 }
 
 repositories {
@@ -25,43 +67,95 @@ repositories {
 
 dependencies {
     // Minecraft / Fabric（26.1 起 Fabric 直接使用 Mojang 官方映射，无需额外声明 mappings）
-    minecraft "com.mojang:minecraft:${project.minecraft_version}"
-    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
-    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
 
     // 编译期依赖 NetMusic 本体（仅用于编译，运行时不打包、不分发）
-    compileOnly "maven.modrinth:net-music:${project.netmusic_version}"
+    compileOnly "maven.modrinth:net-music:${netmusic_version}"
 
-    // 开发环境（runServer/runClient）下需要把 NetMusic 及其前置装进来
-    runtimeOnly "maven.modrinth:net-music:${project.netmusic_version}"
-    runtimeOnly "maven.modrinth:forge-config-api-port:26.1.3-fabric"
-    runtimeOnly "maven.modrinth:cloth-config:26.1.154+fabric"
+    // 开发环境（runServer/runClient）下把 NetMusic 及其前置装进来
+    dev_deps.split(',').each { coord ->
+        runtimeOnly coord.trim()
+    }
 }
 
 loom {
     runs {
         server {
-            runDir "run/server"
+            runDir "run/server-${minecraft_version}"
         }
     }
 }
 
+// ------------------------------------------------------------
+// 生成 MixinNames：NetMusicSound#tick 在不同映射下的方法名不一样
+// ------------------------------------------------------------
+def mixinNamesDir = layout.buildDirectory.dir("generated/mixin-names")
+
+sourceSets {
+    main {
+        java {
+            srcDir mixinNamesDir
+        }
+    }
+}
+
+tasks.register('generateMixinNames') {
+    group = 'build'
+    description = '按当前 MC 版本生成 MixinNames（NetMusicSound#tick 的真实方法名）'
+    outputs.dir mixinNamesDir
+    inputs.property 'sound_tick_method', sound_tick_method
+    doLast {
+        def target = mixinNamesDir.get().asFile
+                .toPath()
+                .resolve("com/splayerbridge/netmusic/mixin/MixinNames.java")
+                .toFile()
+        target.parentFile.mkdirs()
+        target.text = """package com.splayerbridge.netmusic.mixin;
+
+/**
+ * NetMusicSound 的 tick 方法在各 MC 版本下的真实名字，由构建脚本按版本生成，请勿手改。
+ *
+ * <p>Minecraft 26.1.2 的 NetMusic 用 Mojang 官方映射编译，方法名就是 {@code tick()}；
+ * 1.21.1 / 1.20.1 的 NetMusic 用 Yarn 编译，方法名是中转映射下的 {@code method_16896()}。
+ * Mixin 的 {@code method =} 必须是编译期常量，所以才用生成源码而不是读配置。
+ */
+public final class MixinNames {
+    /** NetMusicSound 里负责推进歌词时钟的方法名。 */
+    public static final String SOUND_TICK = "${sound_tick_method}";
+
+    private MixinNames() {
+    }
+}
+"""
+    }
+}
+
+compileJava.dependsOn 'generateMixinNames'
+
 processResources {
     inputs.property "version", project.version
+    inputs.property "mc_constraint", mc_constraint
+    inputs.property "java_constraint", java_constraint
+    inputs.property "loader_constraint", loader_constraint
 
     filesMatching("fabric.mod.json") {
-        expand "version": project.version
+        expand "version": project.version,
+                "mc_constraint": mc_constraint,
+                "java_constraint": java_constraint,
+                "loader_constraint": loader_constraint
     }
 }
 
 tasks.withType(JavaCompile).configureEach {
-    it.options.release = 25
+    it.options.release = Integer.parseInt(java_release.toString())
     it.options.encoding = "UTF-8"
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_25
-    targetCompatibility = JavaVersion.VERSION_25
+    sourceCompatibility = JavaVersion.toVersion(java_release.toString())
+    targetCompatibility = JavaVersion.toVersion(java_release.toString())
 }
 
 jar {
