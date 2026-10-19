@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # MC 版本 → 需要配对的 JDK；Gradle 版本从 versions/<MC>.properties 读
+          # MC 版本 → 配对的 JDK；Gradle 版本从 versions/<MC>.properties 读
           - { mc: '26.1.2', java: '25' }
           - { mc: '1.21.1', java: '21' }
           - { mc: '1.20.1', java: '21' }
@@ -27,18 +27,23 @@ jobs:
           distribution: temurin
           java-version: '${{ matrix.java }}'
 
-      # 版本文件里写着该 MC 版本需要的 Gradle 版本（26.1.2 要 9.x，
-      # 1.21.1/1.20.1 要 8.12）。直接改 wrapper 文件而不是跑 gradle 任务——
-      # 否则为了切 Gradle 还得先用当前版本把项目配置一遍，26.1.2 那条
-      # 在 JDK 21 下会以 "Minecraft 26.1.2 requires Java 25" 失败。
-      - name: Use the Gradle version for MC ${{ matrix.mc }}
+      # 仓库里不提交 gradlew（见 .gitignore），所以用 setup-gradle 提供 Gradle，
+      # 版本按 MC 版本从 versions/<MC>.properties 取：26.1.2 要 9.x，
+      # 1.21.1 / 1.20.1 要 8.12（配 Loom 1.9.2）。
+      - name: Read Gradle version for MC ${{ matrix.mc }}
+        id: toolchain
         run: |
           GRADLE_VERSION=$(grep '^gradle_version=' "versions/${{ matrix.mc }}.properties" | cut -d= -f2)
           echo "MC ${{ matrix.mc }} → Gradle $GRADLE_VERSION, JDK ${{ matrix.java }}"
-          sed -i "s|gradle-[0-9.]*-bin.zip|gradle-${GRADLE_VERSION}-bin.zip|" gradle/wrapper/gradle-wrapper.properties
+          echo "gradle=$GRADLE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Gradle ${{ steps.toolchain.outputs.gradle }}
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ steps.toolchain.outputs.gradle }}
 
       - name: Build
-        run: ./gradlew build -Pactive_mc_version=${{ matrix.mc }} --no-daemon --stacktrace
+        run: gradle build -Pactive_mc_version=${{ matrix.mc }} --no-daemon --stacktrace
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
