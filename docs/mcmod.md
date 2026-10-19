@@ -75,23 +75,23 @@ MC 的 `SoundEngine.play()` 在把流式声音加进 tick 表的**同一时刻**
 
 [h2=安装]
 
-[h3=环境要求]
+[h3=支持哪些版本]
 
-| 项目 | 要求 |
-| --- | --- |
-| Minecraft | **26.1.2** |
-| 加载器 | Fabric（Loader ≥ 0.19.2） |
-| Java | 25 或更高 |
-| 前置 | [网络音乐机](https://www.mcmod.cn/class/4935.html) **1.5.x**（fabric + mc26.1 版）、Fabric API |
-| 服务端 | 运行 [SPlayer](https://github.com/imsyy/SPlayer)，默认监听 `http://127.0.0.1:25884` |
-| 客户端 | 能访问网易云 CDN（frp 只转发游戏端口时正好满足） |
+| MC 版本 | Java | Fabric Loader | NetMusic |
+| --- | --- | --- | --- |
+| **26.1.2** | ≥ 25 | ≥ 0.19.2 | 1.5.x（fabric + mc26.1） |
+| **1.21.1** | ≥ 21 | ≥ 0.16.9 | 1.5.x（fabric + mc1.21.1） |
+| **1.20.1** | ≥ 17 | ≥ 0.16.5 | 1.5.x（fabric + mc1.20.1） |
+
+其它条件：服务端运行 [SPlayer](https://github.com/imsyy/SPlayer)（默认监听 `http://127.0.0.1:25884`）；
+客户端能访问网易云 CDN（frp 只转发游戏端口时正好满足）。
 
 [h3=步骤]
 
-1. 下载 `netmusic-splayer-bridge-x.y.z.jar`
+1. 下载对应 MC 版本的 jar，文件名里带版本，例如 `netmusic-splayer-bridge-mc1.21.1-x.y.z.jar`
 2. 放进**服务端**的 `mods/` 目录
 3. 把**同一个** jar 放进**客户端**的 `mods/` 目录
-4. 确认两端都装了 NetMusic 1.5.x（Fabric 26.1.2 版）
+4. 确认两端都装了对应版本的 NetMusic 1.5.x（Fabric）
 5. 在服务端那台机器上启动 SPlayer 并保持运行，浏览器打开 `http://127.0.0.1:25884/api` 应返回 JSON
 6. 启动游戏，配置自动生成在 `config/netmusic-splayer-bridge.json`
 
@@ -200,7 +200,7 @@ MC 的 `SoundEngine.play()` 在把流式声音加进 tick 表的**同一时刻**
 | 支持平台 | JAVA 版 |
 | 运作方式 | Fabric |
 | 运行环境 | 客户端需装、服务端需装 |
-| MC 版本 | 26.1.2 |
+| MC 版本 | 26.1.2 / 1.21.1 / 1.20.1 |
 | 授权协议 | MIT |
 | 标签 | 网络音乐机、音乐、播放、VIP、SPlayer |
 | 前置 Mod | 网络音乐机（Net Music）、Fabric API |

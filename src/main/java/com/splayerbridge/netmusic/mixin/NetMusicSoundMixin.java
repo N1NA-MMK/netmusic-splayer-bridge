@@ -1,9 +1,7 @@
 package com.splayerbridge.netmusic.mixin;
 
-import com.github.tartaricacid.netmusic.client.audio.NetMusicSound;
 import com.splayerbridge.netmusic.client.LyricGate;
 import com.splayerbridge.netmusic.net.Links;
-import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
@@ -20,11 +18,14 @@ import java.net.URL;
  * <p>
  * 这里在音频就绪前直接取消整次 tick：歌词停住、停止判定也停住，等音频真的开始才一起走。
  * 客户端 {@code RelayAudioHandler} 负责在音频就绪时解除门控。
+ * <p>
+ * 注意：target 用字符串而不是 {@code NetMusicSound.class}。NetMusic 在 1.20.1 / 1.21.1 上是用
+ * Yarn 编译的，它的父类（{@code class_1101}）不在我们 Mojang 映射的编译类路径里，
+ * 用类引用会让 Mixin 注解处理器在解析继承链时报「Superclass ... was not found」。
  */
-@Mixin(value = NetMusicSound.class, remap = false)
+@Mixin(targets = "com.github.tartaricacid.netmusic.client.audio.NetMusicSound", remap = false)
 public abstract class NetMusicSoundMixin {
     @Shadow
-    @Nullable
     private URL songUrl;
 
     @Inject(method = MixinNames.SOUND_TICK + "()V", at = @At("HEAD"), cancellable = true)

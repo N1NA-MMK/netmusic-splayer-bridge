@@ -87,7 +87,7 @@ MC 的 `SoundEngine.play()` 在把流式声音加进 tick 表的**同一时刻**
 
 ## 需要什么
 
-- Minecraft **26.1.2** + Fabric
+- Minecraft **26.1.2**, **1.21.1** or **1.20.1** + Fabric
 - 两端都装 **Net Music 1.5.x**（fabric + mc26.1）
 - 服务端那台机器运行 **SPlayer**（默认 `http://127.0.0.1:25884`）
 - 客户端能访问网易云 CDN（frp 只转发游戏端口时正好满足）

@@ -51,8 +51,8 @@ client receives the marker address → this addon's handler takes over
 
 ## Requirements
 
-- Minecraft **26.1.2** + Fabric
-- **Net Music 1.5.x** (fabric + mc26.1) on both sides
+- Minecraft **26.1.2**, **1.21.1** or **1.20.1** + Fabric
+- **Net Music 1.5.x** (Fabric build matching your MC version) on both sides
 - **SPlayer** running on the server machine (default `http://127.0.0.1:25884`)
 - Clients must be able to reach the NetEase CDN — with frp forwarding only the game port, that's exactly the case
 

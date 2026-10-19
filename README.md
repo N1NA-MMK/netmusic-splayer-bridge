@@ -7,8 +7,8 @@
 
 音频由客户端自己从 CDN 取：**服务端不转发音频、不占额外端口**，所以 frp 只映射游戏端口也能用。
 
-- Minecraft **26.1.2** / Fabric
-- 需要 NetMusic **1.5.x（fabric+mc26.1）**
+- Minecraft **26.1.2 / 1.21.1 / 1.20.1** / Fabric（按版本下载对应 jar）
+- 需要对应版本的 NetMusic **1.5.x（fabric）**
 - 需要 SPlayer 运行在服务端那台机器上（默认 `http://127.0.0.1:25884`）
 - **客户端必须安装本模组**（解码、FLAC、歌词同步都在客户端做，详见下文）
 
@@ -51,7 +51,15 @@ MC 的 `SoundEngine.play()` 对流式声音是这么干的：**先把声音实�
 
 ## 安装
 
-1. 把 `netmusic-splayer-bridge-x.y.z.jar` 放进**服务端**的 `mods/`
+下载时认准文件名里的 MC 版本：`netmusic-splayer-bridge-mc1.21.1-<版本>.jar`。
+
+| MC 版本 | Java | Fabric Loader | NetMusic |
+| --- | --- | --- | --- |
+| 26.1.2 | ≥25 | ≥0.19.2 | 1.5.x（fabric+mc26.1） |
+| 1.21.1 | ≥21 | ≥0.16.9 | 1.5.x（fabric+mc1.21.1） |
+| 1.20.1 | ≥17 | ≥0.16.5 | 1.5.x（fabric+mc1.20.1） |
+
+1. 把对应 MC 版本的 `netmusic-splayer-bridge-mc<版本>-x.y.z.jar` 放进**服务端**的 `mods/`
 2. 把同一个 jar 放进**客户端**的 `mods/`（必需：解码、FLAC、歌词同步都在客户端做）
 3. 确保 NetMusic 1.5.x（Fabric 26.1.2 版）两端都在
 4. 在服务端那台机器上启动 SPlayer 并保持运行，确认 `http://127.0.0.1:25884/api` 能返回 JSON
@@ -99,6 +107,19 @@ MC 的 `SoundEngine.play()` 对流式声音是这么干的：**先把声音实�
 - 客户端必须能访问网易云 CDN——frp 只映射游戏端口正好满足这个前提
 - FLAC 要先下完整首才开播（受解码器限制），歌词会被门控等它，不会超前
 - SPlayer 不可用时回退 NetMusic 原本行为（VIP 歌曲播不出来）
+
+## 自己编译
+
+一份源码三个版本，参数在 `versions/<MC版本>.properties`：
+
+```bash
+./gradlew build                                  # 26.1.2（默认，需 JDK 25）
+./gradlew build -Pactive_mc_version=1.21.1        # 需 JDK 21 + Gradle 8.12
+./gradlew build -Pactive_mc_version=1.20.1        # 需 JDK 17/21 + Gradle 8.12
+```
+
+各版本只差两处，都由构建脚本处理：依赖版本，以及 NetMusicSound#tick 的方法名
+（26.1.2 是 `tick()`，老版本 NetMusic 用 Yarn 编译所以叫 `method_16896()`）。
 
 ## 免责声明
 

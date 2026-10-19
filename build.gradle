@@ -1,6 +1,23 @@
 plugins {
-    id 'net.fabricmc.fabric-loom' version '1.16-SNAPSHOT'
+    // 版本不写在这里，由 settings.gradle 的 pluginManagement 按
+    // active_mc_version 从 versions/<版本>.properties 的 loom_version 动态指定
+    id 'fabric-loom'
 }
+
+def activeMcVersion = (project.findProperty('active_mc_version') ?: '26.1.2').toString()
+def versionFile = rootProject.file("versions/${activeMcVersion}.properties")
+if (!versionFile.exists()) {
+    throw new GradleException("找不到版本配置文件 versions/${activeMcVersion}.properties，" +
+            "可用版本见 versions/ 目录。当前 active_mc_version=${activeMcVersion}")
+}
+
+def versionProps = new Properties()
+versionFile.withInputStream { stream -> versionProps.load(new InputStreamReader(stream, 'UTF-8')) }
+versionProps.each { key, value -> project.ext.set(key.toString(), value.toString()) }
+
+// 老版本需要关掉注解处理器（原因见下面 dependencies 块里的说明）
+def disableAnnotationProcessing = versionProps.getProperty('mixin_ap', 'true') != 'true'
+
 
 // ============================================================
 // 多版本构建
@@ -15,34 +32,13 @@ plugins {
 // 各版本真正的源码差异只有一处：NetMusic 的映射不同（26.1.2 是 Mojang 官方名，
 // 1.21.1/1.20.1 是 Yarn 中转名），导致 NetMusicSound#tick 的方法名不同
 // （tick vs method_16896）——由 generateMixinNames 按版本生成 MixinNames.java。
+//
+// 工具链也按版本走（版本文件里的 loom_version / gradle_version）：
+//   26.1.2 → Loom 1.16-SNAPSHOT + Gradle 9.6.1
+//   1.21.1 / 1.20.1 → Loom 1.9.2 + Gradle 8.12（老 Loom 才会同时处理
+//                     fabric-api 的 intermediary 访问接口和官方映射）
+// 换版本时 CI 会先按 gradle_version 重新生成 Gradle Wrapper。
 // ============================================================
-
-def activeMcVersion = (project.findProperty('active_mc_version') ?: '26.1.2').toString()
-def versionFile = rootProject.file("versions/${activeMcVersion}.properties")
-if (!versionFile.exists()) {
-    throw new GradleException("找不到版本配置文件 versions/${activeMcVersion}.properties，" +
-            "可用版本见 versions/ 目录。当前 active_mc_version=${activeMcVersion}")
-}
-
-def versionProps = new Properties()
-versionFile.withInputStream { stream -> versionProps.load(new InputStreamReader(stream, 'UTF-8')) }
-versionProps.each { key, value -> project.ext.set(key.toString(), value.toString()) }
-
-if (versionProps.getProperty('toolchain', 'modern') == 'legacy') {
-    // 老版本（1.21.1 / 1.20.1）需要整套旧工具链：Loom 1.7-1.13 + Gradle 8.x + Yarn 映射。
-    // 现代 Loom（1.14 起）已经移除了 mappings 配置、强制使用官方映射，
-    // 无法解析 1.21.1/1.20.1 的 fabric-api（其中 21 个模块带的 .accesswidener
-    // 是 intermediary 命名空间，包括我们要用的 fabric-command-api-v2）。
-    // 等工具链方案落地后，把这里换成对应的构建配置即可。
-    throw new GradleException("""
-        MC ${activeMcVersion} 需要旧工具链（Loom ≤1.13 + Gradle 8 + Yarn 映射），
-        当前构建脚本用的 Loom 1.16 系列只能编译 MC 26.1 及以后的官方映射版本。
-
-        源码侧已经就绪：NetMusic 在该版本的 API 与 26.1.2 完全一致，
-        只差 mixin 方法名（${sound_tick_method}），MixinNames 会按版本自动生成。
-        缺的是构建工具链，需要为该版本单独配置 Loom + Gradle 组合。
-        """.stripIndent())
-}
 
 version = project.mod_version
 group = project.maven_group
@@ -68,11 +64,24 @@ repositories {
 dependencies {
     // Minecraft / Fabric（26.1 起 Fabric 直接使用 Mojang 官方映射，无需额外声明 mappings）
     minecraft "com.mojang:minecraft:${minecraft_version}"
-    implementation "net.fabricmc:fabric-loader:${loader_version}"
-    implementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
+    // 26.1 起 Loom 默认就是官方映射；老版本（1.21.1/1.20.1）必须显式声明，
+    // 否则 Loom 走 Yarn，我们的源码用的是 Mojang 类名会编译不过
+    if (versionProps.getProperty('mojang_mappings', 'true') == 'true') {
+        mappings loom.officialMojangMappings()
+    }
+    // 注意：必须是 modImplementation，Loom 只把 sponge-mixin 等库挂到 mod 依赖上，
+    // 用普通 implementation 会编译不过 Mixin 注解
+    modImplementation "net.fabricmc:fabric-loader:${loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
 
     // 编译期依赖 NetMusic 本体（仅用于编译，运行时不打包、不分发）
     compileOnly "maven.modrinth:net-music:${netmusic_version}"
+
+    // 老版本关闭注解处理器（-proc:none）：MixinExtras 的注解处理器要解析目标类的
+    // 继承链，而 NetMusic 在 1.20.1/1.21.1 上用 Yarn 编译，父类 class_1101 不在我们
+    // Mojang 映射的编译类路径里，直接报 "Superclass ... was not found"。
+    // 处理器是以 -processorpath 挂上的，exclude 配置拦不住，只能整颗关掉。
+    // 我们的 mixin 全部 remap=false，本来就不需要它生成 refmap，关掉不影响运行。
 
     // 开发环境（runServer/runClient）下把 NetMusic 及其前置装进来
     dev_deps.split(',').each { coord ->
@@ -151,6 +160,9 @@ processResources {
 tasks.withType(JavaCompile).configureEach {
     it.options.release = Integer.parseInt(java_release.toString())
     it.options.encoding = "UTF-8"
+    if (disableAnnotationProcessing) {
+        it.options.compilerArgs.add '-proc:none'
+    }
 }
 
 java {
