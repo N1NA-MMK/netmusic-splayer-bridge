@@ -212,12 +212,18 @@ processResources {
     inputs.property "mc_constraint", mc_constraint
     inputs.property "java_constraint", java_constraint
     inputs.property "loader_constraint", loader_constraint
+    inputs.property "mixin_compat", mixin_compat
 
     filesMatching("fabric.mod.json") {
         expand "version": project.version,
                 "mc_constraint": mc_constraint,
                 "java_constraint": java_constraint,
                 "loader_constraint": loader_constraint
+    }
+
+    // compatibilityLevel 不能写死：1.20.1 跑 Java 17，写 JAVA_25 会让 Mixin 初始化直接崩
+    filesMatching("*.mixins.json") {
+        expand "mixin_compat": mixin_compat
     }
 }
 

@@ -2,7 +2,7 @@
   "required": true,
   "minVersion": "0.8",
   "package": "com.splayerbridge.netmusic.mixin",
-  "compatibilityLevel": "JAVA_25",
+  "compatibilityLevel": "${mixin_compat}",
   "mixins": [
     "NetMusicSoundMixin"
   ],
