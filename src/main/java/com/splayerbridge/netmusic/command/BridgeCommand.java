@@ -23,9 +23,8 @@ public final class BridgeCommand {
 
     public static LiteralArgumentBuilder<CommandSourceStack> build() {
         return Commands.literal(ROOT)
-                // 不用 Commands.hasPermission(int)：它在 1.20.1 是两个参数，
-                // CommandSourceStack.hasPermission(int) 各版本签名一致
-                .requires(source -> source.hasPermission(Commands.LEVEL_GAMEMASTERS))
+                // 权限判断按版本生成，见 CommandPermission
+                .requires(CommandPermission::isGamemaster)
                 .then(Commands.literal("status").executes(BridgeCommand::status))
                 .then(Commands.literal("reload").executes(BridgeCommand::reload));
     }

@@ -1,7 +1,24 @@
-plugins {
-    // 版本不写在这里，由 settings.gradle 的 pluginManagement 按
-    // active_mc_version 从 versions/<版本>.properties 的 loom_version 动态指定
-    id 'fabric-loom'
+// Loom 的插件 id 和版本都随 MC 版本变化，而 plugins {} 块里写不了变量，
+// 所以走 buildscript + apply plugin。
+// 注意：buildscript 必须是脚本第一条语句，里面拿不到后面定义的变量，
+// 只能自己再读一次版本文件。
+buildscript {
+    def requested = gradle.startParameter.projectProperties['active_mc_version'] ?: '26.1.2'
+    def versionFile = new File(gradle.startParameter.currentDir ?: new File('.').canonicalFile,
+            "versions/${requested}.properties")
+    if (!versionFile.exists()) {
+        throw new GradleException("找不到版本配置文件 versions/${requested}.properties")
+    }
+    def props = new Properties()
+    versionFile.withInputStream { props.load(it) }
+    repositories {
+        maven { url 'https://maven.fabricmc.net/' }
+        mavenCentral()
+        mavenLocal()
+    }
+    dependencies {
+        classpath "net.fabricmc:fabric-loom:${props.getProperty('loom_version')}"
+    }
 }
 
 def activeMcVersion = (project.findProperty('active_mc_version') ?: '26.1.2').toString()
@@ -17,6 +34,12 @@ versionProps.each { key, value -> project.ext.set(key.toString(), value.toString
 
 // 老版本需要关掉注解处理器（原因见下面 dependencies 块里的说明）
 def disableAnnotationProcessing = versionProps.getProperty('mixin_ap', 'true') != 'true'
+
+// Loom 1.16 起，fabric-loom 与 net.fabricmc.fabric-loom 是两个不同的插件类：
+// 前者是 LoomGradlePlugin（经典版，要求 mappings 配置有内容），
+// 后者是 LoomNoRemapGradlePlugin（官方映射世界，不读 mappings）。
+// 26.1.2 用后者，1.21.1/1.20.1 用前者，见各版本文件里的 loom_plugin_id。
+apply plugin: versionProps.getProperty('loom_plugin_id', 'fabric-loom')
 
 
 // ============================================================
@@ -69,10 +92,18 @@ dependencies {
     if (versionProps.getProperty('mojang_mappings', 'true') == 'true') {
         mappings loom.officialMojangMappings()
     }
-    // 注意：必须是 modImplementation，Loom 只把 sponge-mixin 等库挂到 mod 依赖上，
-    // 用普通 implementation 会编译不过 Mixin 注解
-    modImplementation "net.fabricmc:fabric-loader:${loader_version}"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
+    // 老 Loom 必须用 modImplementation（sponge-mixin 只挂在 mod 依赖上，用普通
+    // implementation 会编译不过 Mixin 注解）；26.1.2 的 LoomNoRemapGradlePlugin
+    // 不创建 mod 配置，只能用 implementation。
+    def loaderDep = "net.fabricmc:fabric-loader:${loader_version}"
+    def fabricApiDep = "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
+    if (versionProps.getProperty('use_mod_implementation', 'true') == 'true') {
+        modImplementation loaderDep
+        modImplementation fabricApiDep
+    } else {
+        implementation loaderDep
+        implementation fabricApiDep
+    }
 
     // 编译期依赖 NetMusic 本体（仅用于编译，运行时不打包、不分发）
     compileOnly "maven.modrinth:net-music:${netmusic_version}"
@@ -115,6 +146,7 @@ tasks.register('generateMixinNames') {
     description = '按当前 MC 版本生成 MixinNames（NetMusicSound#tick 的真实方法名）'
     outputs.dir mixinNamesDir
     inputs.property 'sound_tick_method', sound_tick_method
+    inputs.property 'new_permission_api', versionProps.getProperty('new_permission_api', 'false')
     doLast {
         def target = mixinNamesDir.get().asFile
                 .toPath()
@@ -135,6 +167,38 @@ public final class MixinNames {
     public static final String SOUND_TICK = "${sound_tick_method}";
 
     private MixinNames() {
+    }
+}
+"""
+
+        // 权限判断同样按版本生成：26.1 换成了 PermissionSet/Permission，
+        // CommandSourceStack#hasPermission(int) 已经不存在
+        def permTarget = mixinNamesDir.get().asFile
+                .toPath()
+                .resolve("com/splayerbridge/netmusic/command/CommandPermission.java")
+                .toFile()
+        permTarget.parentFile.mkdirs()
+        def newApi = versionProps.getProperty('new_permission_api', 'false') == 'true'
+        def body = newApi
+                ? "        return source.permissions()\n                .hasPermission(net.minecraft.server.permissions.Permissions.COMMANDS_GAMEMASTER);"
+                : "        return source.hasPermission(2);"
+        permTarget.text = """package com.splayerbridge.netmusic.command;
+
+import net.minecraft.commands.CommandSourceStack;
+
+/**
+ * 权限判断，由构建脚本按 MC 版本生成，请勿手改。
+ *
+ * <p>26.1 把权限系统换成了 {@code PermissionSet}/{@code Permission}，
+ * {@code CommandSourceStack#hasPermission(int)} 已经不存在。
+ */
+public final class CommandPermission {
+    /** 是否有 GM（权限等级 2）以上权限。 */
+    public static boolean isGamemaster(CommandSourceStack source) {
+${body}
+    }
+
+    private CommandPermission() {
     }
 }
 """

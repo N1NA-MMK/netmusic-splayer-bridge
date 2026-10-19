@@ -10,23 +10,6 @@ pluginManagement {
     // Loom 版本跟着 MC 版本走：26.1.2 用 1.16-SNAPSHOT（需要 Gradle 9），
     // 1.21.1 / 1.20.1 用 1.9.2（配合 Gradle 8.12；老 Loom 才能同时处理
     // fabric-api 的 intermediary 访问接口和官方映射）。
-    def activeMcVersion = (providers.gradleProperty('active_mc_version').orNull) ?: '26.1.2'
-    def versionFile = file("versions/${activeMcVersion}.properties")
-    if (!versionFile.exists()) {
-        throw new GradleException("找不到版本配置文件 versions/${activeMcVersion}.properties，" +
-                "可用版本见 versions/ 目录。当前 active_mc_version=${activeMcVersion}")
-    }
-    def props = new Properties()
-    versionFile.withInputStream { props.load(it) }
-    def loomVersion = props.getProperty('loom_version')
-
-    resolutionStrategy {
-        eachPlugin {
-            if (requested.id.id == 'net.fabricmc.fabric-loom' || requested.id.id == 'fabric-loom') {
-                useModule("net.fabricmc:fabric-loom:" + loomVersion)
-            }
-        }
-    }
 }
 
 rootProject.name = 'netmusic-splayer-bridge'
